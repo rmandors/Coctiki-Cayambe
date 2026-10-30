@@ -54,19 +54,6 @@ npm install
 npm run dev
 ```
 
-## 3. Publicar en Vercel
-
-1. Sube el repositorio a GitHub o a Cursor.
-2. Importa el proyecto en Vercel. El framework es Vite.
-3. Agrega las mismas variables:
-
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-
-4. En Supabase → Authentication → URL configuration, agrega la URL de Vercel (por ejemplo `https://tu-app.vercel.app`) como Site URL.
-
-`vercel.json` reenvía las rutas de la app a `index.html`.
-
 ## Cómo se calcula el margen
 
 Cada venta guarda el costo de la receta en ese momento. Los indicadores comparan lo cobrado (después del descuento) con ese costo. El menú actual muestra el margen teórico con los costos de hoy.
