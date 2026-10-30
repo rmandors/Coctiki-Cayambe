@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider.tsx'
 import { PageHeader } from '@/components/feedback.tsx'
-import { Badge } from '@/components/ui/badge.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import {
   Dialog,
@@ -29,6 +28,8 @@ import { roleLabels } from '@/lib/labels.ts'
 import { supabase } from '@/lib/supabase.ts'
 import type { AppRole, Profile } from '@/lib/types.ts'
 
+const roles: AppRole[] = ['cajero', 'portero', 'admin']
+
 export function UsersPage() {
   const { profile } = useAuth()
   const queryClient = useQueryClient()
@@ -37,6 +38,7 @@ export function UsersPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<AppRole>('cajero')
+  const [removing, setRemoving] = useState<Profile | null>(null)
 
   const usersQuery = useQuery({
     queryKey: ['profiles'],
@@ -46,6 +48,10 @@ export function UsersPage() {
       return (data ?? []) as Profile[]
     },
   })
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['profiles'] })
+  }
 
   const createUser = useMutation({
     mutationFn: async () => {
@@ -61,21 +67,35 @@ export function UsersPage() {
       setEmail('')
       setPassword('')
       setRole('cajero')
-      void queryClient.invalidateQueries({ queryKey: ['profiles'] })
+      refresh()
     },
     onError: (error) => toast.error(errorMessage(error)),
   })
 
   const updateUser = useMutation({
-    mutationFn: async (change: { id: string; role?: AppRole; active?: boolean }) => {
+    mutationFn: async (change: { id: string; role?: AppRole; active?: boolean; full_name?: string }) => {
       const { error } = await supabase.from('profiles').update({
         ...(change.role ? { role: change.role } : {}),
         ...(change.active === undefined ? {} : { active: change.active }),
+        ...(change.full_name === undefined ? {} : { full_name: change.full_name }),
       }).eq('id', change.id)
       if (error) throw new Error(error.message)
     },
+    onSuccess: () => refresh(),
+    onError: (error) => toast.error(errorMessage(error)),
+  })
+
+  const deleteUser = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.functions.invoke('admin-create-user', {
+        body: { action: 'delete', id },
+      })
+      if (error) throw new Error(await functionErrorMessage(error))
+    },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['profiles'] })
+      toast.success('Usuario eliminado')
+      setRemoving(null)
+      refresh()
     },
     onError: (error) => toast.error(errorMessage(error)),
   })
@@ -89,45 +109,23 @@ export function UsersPage() {
     <div>
       <PageHeader
         title="Usuarios"
-        description="El cajero solo factura. El administrador entra a inventario, indicadores, catálogo y usuarios."
+        description="El cajero factura el menú, sin entradas ni barra libre. Portería solo vende esas dos. El administrador ve todo."
         action={<Button className="h-11" onClick={() => setOpen(true)}>Nuevo usuario</Button>}
       />
       {usersQuery.isError ? <p className="mb-3 text-sm text-destructive">{errorMessage(usersQuery.error)}</p> : null}
       <div className="grid gap-3">
-        {(usersQuery.data ?? []).map((person) => {
-          const isSelf = person.id === profile?.id
-          return (
-            <article key={person.id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-4">
-              <div className="min-w-40 flex-1">
-                <p className="font-medium">{person.full_name}</p>
-                <p className="text-sm text-muted-foreground">{person.email}</p>
-              </div>
-              <Badge variant={person.active ? 'secondary' : 'outline'}>{person.active ? 'Activo' : 'Inactivo'}</Badge>
-              <Select
-                value={person.role}
-                disabled={isSelf || updateUser.isPending}
-                onValueChange={(value) => updateUser.mutate({ id: person.id, role: value as AppRole })}
-              >
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cajero">{roleLabels.cajero}</SelectItem>
-                  <SelectItem value="admin">{roleLabels.admin}</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={person.active}
-                  disabled={isSelf || updateUser.isPending}
-                  onCheckedChange={(checked) => updateUser.mutate({ id: person.id, active: checked })}
-                  aria-label={`Activar ${person.full_name}`}
-                />
-                <span className="text-sm text-muted-foreground">{isSelf ? 'Tú' : 'Activo'}</span>
-              </div>
-            </article>
-          )
-        })}
+        {(usersQuery.data ?? []).map((person) => (
+          <UserRow
+            key={`${person.id}:${person.full_name}:${person.role}:${person.active}`}
+            person={person}
+            isSelf={person.id === profile?.id}
+            pending={updateUser.isPending || deleteUser.isPending}
+            onRename={(fullName) => updateUser.mutate({ id: person.id, full_name: fullName })}
+            onRole={(next) => updateUser.mutate({ id: person.id, role: next })}
+            onActive={(active) => updateUser.mutate({ id: person.id, active })}
+            onDelete={() => setRemoving(person)}
+          />
+        ))}
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -151,15 +149,7 @@ export function UsersPage() {
             </div>
             <div className="grid gap-1.5">
               <Label>Rol</Label>
-              <Select value={role} onValueChange={(value) => setRole(value as AppRole)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cajero">{roleLabels.cajero}</SelectItem>
-                  <SelectItem value="admin">{roleLabels.admin}</SelectItem>
-                </SelectContent>
-              </Select>
+              <RoleSelect value={role} onChange={setRole} />
             </div>
           </form>
           <DialogFooter>
@@ -169,6 +159,103 @@ export function UsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={removing !== null} onOpenChange={(next) => { if (!next) setRemoving(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar usuario</DialogTitle>
+            <DialogDescription>
+              {removing ? `${removing.full_name} ya no podrá entrar. Sus ventas quedan en el historial.` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)}>Cancelar</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteUser.isPending || !removing}
+              onClick={() => { if (removing) deleteUser.mutate(removing.id) }}
+            >
+              {deleteUser.isPending ? 'Eliminando…' : 'Eliminar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  )
+}
+
+function RoleSelect({ value, onChange, disabled }: { value: AppRole; onChange: (role: AppRole) => void; disabled?: boolean }) {
+  return (
+    <Select value={value} disabled={disabled} onValueChange={(next) => onChange(next as AppRole)}>
+      <SelectTrigger className="w-full sm:w-40">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {roles.map((item) => (
+          <SelectItem key={item} value={item}>{roleLabels[item]}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+function UserRow({
+  person,
+  isSelf,
+  pending,
+  onRename,
+  onRole,
+  onActive,
+  onDelete,
+}: {
+  person: Profile
+  isSelf: boolean
+  pending: boolean
+  onRename: (fullName: string) => void
+  onRole: (role: AppRole) => void
+  onActive: (active: boolean) => void
+  onDelete: () => void
+}) {
+  const [name, setName] = useState(person.full_name)
+  const trimmed = name.trim()
+  const dirty = trimmed !== person.full_name
+
+  return (
+    <article className="grid gap-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+      <div className="grid gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Input
+            aria-label={`Nombre de ${person.full_name}`}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className="max-w-xs"
+          />
+          <Button
+            variant="outline"
+            className="h-11"
+            disabled={!dirty || trimmed.length < 2 || pending}
+            onClick={() => onRename(trimmed)}
+          >
+            Renombrar
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">{person.email}{isSelf ? ' · Tú' : ''}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <RoleSelect value={person.role} disabled={isSelf || pending} onChange={onRole} />
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Switch
+            checked={person.active}
+            disabled={isSelf || pending}
+            onCheckedChange={onActive}
+            aria-label={`Activar ${person.full_name}`}
+          />
+          Activo
+        </label>
+        <Button variant="outline" className="h-11" disabled={isSelf || pending} onClick={onDelete}>
+          Eliminar
+        </Button>
+      </div>
+    </article>
   )
 }

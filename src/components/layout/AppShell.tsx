@@ -21,8 +21,8 @@ import type { AppRole } from '@/lib/types.ts'
 import { cn } from '@/lib/utils.ts'
 
 const links: { to: string; label: string; icon: LucideIcon; roles: AppRole[] }[] = [
-  { to: '/facturacion', label: 'Facturación', icon: GlassWater, roles: ['cajero', 'admin'] },
-  { to: '/ventas', label: 'Ventas', icon: ReceiptText, roles: ['cajero', 'admin'] },
+  { to: '/facturacion', label: 'Facturación', icon: GlassWater, roles: ['cajero', 'portero', 'admin'] },
+  { to: '/ventas', label: 'Ventas', icon: ReceiptText, roles: ['admin'] },
   { to: '/inventario', label: 'Inventario', icon: Package, roles: ['admin'] },
   { to: '/indicadores', label: 'Indicadores', icon: ChartColumn, roles: ['admin'] },
   { to: '/admin/catalogo', label: 'Catálogo', icon: BookOpen, roles: ['admin'] },

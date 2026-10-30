@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/sheet.tsx'
 import { asNumber, errorMessage, formatDateTime, formatMoney, formatStock, roundMoney } from '@/lib/format.ts'
 import { paymentLabels } from '@/lib/labels.ts'
+import { bundleTotal, priceLines, tierLabel } from '@/lib/pricing.ts'
 import { supabase } from '@/lib/supabase.ts'
 import type { CartLine, PaymentMethod, Product, SaleResult, StockWarning } from '@/lib/types.ts'
 
@@ -31,7 +32,7 @@ type DiscountMode = 'monto' | 'porcentaje'
 type Receipt = {
   saleNumber: number
   createdAt: string
-  lines: CartLine[]
+  lines: Array<CartLine & { charge: number }>
   subtotal: number
   discount: number
   total: number
@@ -63,11 +64,12 @@ export function PosPage() {
   const { profile } = useAuth()
   const queryClient = useQueryClient()
   const productsQuery = useQuery({
-    queryKey: ['products', 'active'],
+    queryKey: ['products', 'active', profile?.role],
+    enabled: Boolean(profile),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('id, name, category, price, requires_variant, product_variants(id, name, price, active)')
+        .select('id, name, category, price, requires_variant, door_only, product_variants(id, name, price, active), product_price_tiers(quantity, total_price)')
         .eq('active', true)
         .order('category')
         .order('name')
@@ -75,6 +77,9 @@ export function PosPage() {
       return ((data ?? []) as Product[]).map((product) => ({
         ...product,
         price: asNumber(product.price),
+        product_price_tiers: (product.product_price_tiers ?? [])
+          .map((tier) => ({ quantity: asNumber(tier.quantity), total_price: asNumber(tier.total_price) }))
+          .sort((a, b) => a.quantity - b.quantity),
         product_variants: (product.product_variants ?? [])
           .filter((variant) => variant.active)
           .map((variant) => ({
@@ -97,13 +102,43 @@ export function PosPage() {
   const [cartOpen, setCartOpen] = useState(false)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
 
-  const categories = useMemo(() => {
-    const names = new Set((productsQuery.data ?? []).map((product) => product.category))
-    return ['Todas', ...Array.from(names).sort((a, b) => a.localeCompare(b, 'es'))]
-  }, [productsQuery.data])
+  const menu = useMemo(() => {
+    return (productsQuery.data ?? []).filter((product) => {
+      if (profile?.role === 'portero') return product.door_only
+      if (profile?.role === 'cajero') return !product.door_only
+      return true
+    })
+  }, [productsQuery.data, profile?.role])
 
-  const visible = (productsQuery.data ?? []).filter((product) => category === 'Todas' || product.category === category)
-  const subtotal = roundMoney(cart.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0))
+  const categories = useMemo(() => {
+    const names = new Set(menu.map((product) => product.category))
+    return ['Todas', ...Array.from(names).sort((a, b) => a.localeCompare(b, 'es'))]
+  }, [menu])
+
+  const visible = menu.filter((product) => category === 'Todas' || product.category === category)
+  const priced = useMemo(() => {
+    const rules = new Map((productsQuery.data ?? []).map((product) => [
+      product.id,
+      {
+        basePrice: product.price,
+        tiers: (product.product_price_tiers ?? []).map((tier) => ({ quantity: tier.quantity, total: tier.total_price })),
+      },
+    ]))
+    return priceLines(cart, rules)
+  }, [cart, productsQuery.data])
+  const promos = useMemo(() => {
+    return (productsQuery.data ?? []).flatMap((product) => {
+      const tiers = product.product_price_tiers ?? []
+      if (tiers.length === 0) return []
+      const units = cart.filter((line) => line.productId === product.id).reduce((sum, line) => sum + line.quantity, 0)
+      if (!Number.isInteger(units) || units < 2) return []
+      const bundle = bundleTotal(product.price, units, tiers.map((tier) => ({ quantity: tier.quantity, total: tier.total_price })))
+      const list = roundMoney(product.price * units)
+      if (bundle === list) return []
+      return [`${units} × ${product.name} por ${formatMoney(bundle)}`]
+    })
+  }, [cart, productsQuery.data])
+  const subtotal = priced.subtotal
   const rawDiscount = Number(discountValue.replace(',', '.')) || 0
   const discount = roundMoney(
     discountMode === 'porcentaje'
@@ -166,7 +201,7 @@ export function PosPage() {
       setReceipt({
         saleNumber: result.sale_number,
         createdAt: result.created_at,
-        lines: cart,
+        lines: priced.lines,
         subtotal: result.subtotal,
         discount: result.discount,
         total: result.total,
@@ -196,13 +231,13 @@ export function PosPage() {
       </div>
       <div className="grid max-h-72 gap-2 overflow-y-auto">
         {cart.length === 0 ? <p className="text-sm text-muted-foreground">Toca un producto para agregarlo.</p> : null}
-        {cart.map((line) => (
+        {priced.lines.map((line) => (
           <div key={line.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-xl bg-muted/60 px-3 py-2">
             <div className="min-w-0">
               <p className="truncate font-medium">{line.name}</p>
               <p className="text-xs text-muted-foreground">
                 {line.variantName ? `${line.variantName} · ` : ''}
-                {formatMoney(line.unitPrice)}
+                {formatMoney(line.charge)}
               </p>
             </div>
             <div className="flex items-center gap-1">
@@ -217,6 +252,7 @@ export function PosPage() {
           </div>
         ))}
       </div>
+      {promos.map((note) => <p key={note} className="text-sm text-primary">{note}</p>)}
       <div className="grid gap-2">
         <div className="flex gap-2">
           <Button
@@ -271,7 +307,11 @@ export function PosPage() {
     <div className="pb-24 lg:pb-0">
       <div className="mb-4">
         <h1 className="font-heading text-3xl">Facturación</h1>
-        <p className="text-sm text-muted-foreground">Elige el producto. Si es jarra, confirma el sabor antes de cobrar.</p>
+        <p className="text-sm text-muted-foreground">
+          {profile?.role === 'portero'
+            ? 'Entrada y barra libre.'
+            : 'Elige el producto. Si es jarra, confirma el sabor antes de cobrar.'}
+        </p>
       </div>
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
         {categories.map((name) => (
@@ -316,7 +356,11 @@ export function PosPage() {
                   <span className="font-heading mt-1 block text-xl">{product.name}</span>
                 </span>
                 <span className="text-sm font-medium text-primary">
-                  {formatMoney(product.price)}
+                  {tierLabel(
+                    product.price,
+                    (product.product_price_tiers ?? []).map((tier) => ({ quantity: tier.quantity, total: tier.total_price })),
+                    formatMoney,
+                  )}
                   {product.requires_variant ? ' · sabor' : ''}
                 </span>
               </button>
@@ -348,7 +392,15 @@ export function PosPage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="font-heading text-2xl">{flavorProduct?.name}</DialogTitle>
-            <DialogDescription>Elige el sabor y la cantidad.</DialogDescription>
+            <DialogDescription>
+              {(flavorProduct?.product_price_tiers?.length ?? 0) > 0
+                ? `Puedes mezclar sabores. ${tierLabel(
+                    flavorProduct?.price ?? 0,
+                    (flavorProduct?.product_price_tiers ?? []).map((tier) => ({ quantity: tier.quantity, total: tier.total_price })),
+                    formatMoney,
+                  )}`
+                : 'Elige el sabor y la cantidad.'}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-2">
             {flavorProduct?.product_variants.map((variant) => (
@@ -412,7 +464,7 @@ export function PosPage() {
               {receipt.lines.map((line) => (
                 <div key={line.key} className="flex justify-between gap-3 text-sm">
                   <span>{line.quantity} {line.name}{line.variantName ? ` ${line.variantName}` : ''}</span>
-                  <span>{formatMoney(line.unitPrice * line.quantity)}</span>
+                  <span>{formatMoney(line.charge)}</span>
                 </div>
               ))}
               <div className="my-3 border-t border-dashed border-black/30" />

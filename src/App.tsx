@@ -17,8 +17,8 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route index element={<Navigate to="/facturacion" replace />} />
           <Route path="/facturacion" element={<PosPage />} />
-          <Route path="/ventas" element={<SalesPage />} />
           <Route element={<RequireRole role="admin" />}>
+            <Route path="/ventas" element={<SalesPage />} />
             <Route path="/inventario" element={<InventoryPage />} />
             <Route path="/indicadores" element={<KpisPage />} />
             <Route path="/admin/catalogo" element={<CatalogPage />} />

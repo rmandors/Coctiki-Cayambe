@@ -70,7 +70,7 @@ export function CatalogPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('id, name, category, price, active, requires_variant, created_at, product_variants(id, product_id, name, price, active)')
+        .select('id, name, category, price, active, requires_variant, door_only, created_at, product_variants(id, product_id, name, price, active)')
         .order('category')
         .order('name')
       if (error) throw new Error(error.message)
@@ -104,7 +104,7 @@ export function CatalogPage() {
     <div>
       <PageHeader
         title="Catálogo"
-        description="Insumos, productos y la conversión de cada receta. 1 galón que rinde 5 jarras descuenta 0.2 por venta."
+        description="Insumos, productos y la conversión de cada receta. 1 galón rinde 6 jarras, así que cada jarra descuenta 0.1667 galón."
       />
       <Tabs defaultValue="productos">
         <TabsList className="h-11">
@@ -388,6 +388,83 @@ function ProductsPanel({
   )
 }
 
+function PriceTiersEditor({ productId }: { productId: string }) {
+  const queryClient = useQueryClient()
+  const [quantity, setQuantity] = useState('')
+  const [total, setTotal] = useState('')
+  const tiersQuery = useQuery({
+    queryKey: ['price-tiers', productId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('product_price_tiers')
+        .select('id, quantity, total_price')
+        .eq('product_id', productId)
+        .order('quantity')
+      if (error) throw new Error(error.message)
+      return (data ?? []).map((tier) => ({
+        id: tier.id as string,
+        quantity: asNumber(tier.quantity),
+        total_price: asNumber(tier.total_price),
+      }))
+    },
+  })
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const pack = Number(quantity)
+      const price = numberOrNull(total)
+      if (!Number.isInteger(pack) || pack < 2 || price === null || price < 0) {
+        throw new Error('La cantidad es un entero desde 2 y el precio no puede ser negativo')
+      }
+      const { error } = await supabase.from('product_price_tiers').upsert({
+        product_id: productId,
+        quantity: pack,
+        total_price: price,
+      }, { onConflict: 'product_id,quantity' })
+      if (error) throw new Error(error.message)
+    },
+    onSuccess: () => {
+      setQuantity('')
+      setTotal('')
+      void queryClient.invalidateQueries({ queryKey: ['price-tiers', productId] })
+      void queryClient.invalidateQueries({ queryKey: ['products'] })
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  })
+
+  const remove = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('product_price_tiers').delete().eq('id', id)
+      if (error) throw new Error(error.message)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['price-tiers', productId] })
+      void queryClient.invalidateQueries({ queryKey: ['products'] })
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  })
+
+  return (
+    <section className="grid gap-3">
+      <div>
+        <h2 className="font-heading text-xl">Precio por cantidad</h2>
+        <p className="text-sm text-muted-foreground">El precio de una unidad es el del producto. Desde 2, el total puede ser otro aunque se mezclen sabores.</p>
+      </div>
+      {(tiersQuery.data ?? []).map((tier) => (
+        <div key={tier.id} className="flex items-center justify-between gap-3 text-sm">
+          <span>{tier.quantity} por {formatMoney(tier.total_price)}</span>
+          <Button variant="outline" className="h-9" onClick={() => remove.mutate(tier.id)}>Quitar</Button>
+        </div>
+      ))}
+      <div className="flex flex-wrap gap-2">
+        <Input className="max-w-28" inputMode="numeric" placeholder="Cantidad" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
+        <Input className="max-w-32" inputMode="decimal" placeholder="Precio total" value={total} onChange={(event) => setTotal(event.target.value)} />
+        <Button variant="outline" className="h-11" disabled={save.isPending} onClick={() => save.mutate()}>Agregar</Button>
+      </div>
+    </section>
+  )
+}
+
 function ProductCreateDialog({
   open,
   pending,
@@ -466,6 +543,7 @@ function ProductEditor({
   const [category, setCategory] = useState(product.category)
   const [price, setPrice] = useState(String(product.price))
   const [requiresVariant, setRequiresVariant] = useState(product.requires_variant)
+  const [doorOnly, setDoorOnly] = useState(product.door_only)
   const [active, setActive] = useState(product.active)
   const [scope, setScope] = useState('base')
   const [variantName, setVariantName] = useState('')
@@ -498,6 +576,7 @@ function ProductEditor({
         category: category.trim(),
         price: parsed,
         requires_variant: requiresVariant,
+        door_only: doorOnly,
         active,
       }).eq('id', product.id)
       if (error) throw new Error(error.message)
@@ -596,12 +675,15 @@ function ProductEditor({
         </div>
         <div className="flex items-end justify-between gap-4 pb-1">
           <label className="flex items-center gap-2 text-sm">Pide sabor <Switch checked={requiresVariant} onCheckedChange={setRequiresVariant} /></label>
+          <label className="flex items-center gap-2 text-sm">Solo portería <Switch checked={doorOnly} onCheckedChange={setDoorOnly} /></label>
           <label className="flex items-center gap-2 text-sm">Activo <Switch checked={active} onCheckedChange={setActive} /></label>
         </div>
       </div>
       <Button className="h-11 w-fit" disabled={saveProduct.isPending} onClick={() => saveProduct.mutate()}>
         Guardar producto
       </Button>
+
+      <PriceTiersEditor productId={product.id} />
 
       {requiresVariant ? (
         <section className="grid gap-3">

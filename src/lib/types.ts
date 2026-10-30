@@ -1,4 +1,4 @@
-export type AppRole = 'cajero' | 'admin'
+export type AppRole = 'cajero' | 'portero' | 'admin'
 export type PaymentMethod = 'efectivo' | 'transferencia' | 'tarjeta'
 export type SaleStatus = 'completada' | 'anulada'
 export type MovementReason = 'venta' | 'anulacion' | 'ajuste' | 'compra'
@@ -33,6 +33,11 @@ export type ProductVariant = {
   active: boolean
 }
 
+export type PriceTier = {
+  quantity: number
+  total_price: number
+}
+
 export type Product = {
   id: string
   name: string
@@ -40,8 +45,10 @@ export type Product = {
   price: number
   active: boolean
   requires_variant: boolean
+  door_only: boolean
   created_at: string
   product_variants: ProductVariant[]
+  product_price_tiers?: PriceTier[]
 }
 
 export type RecipeItem = {
@@ -59,6 +66,7 @@ export type SaleItem = {
   quantity: number
   unit_price: number
   unit_cost: number
+  line_total: number
 }
 
 export type Sale = {

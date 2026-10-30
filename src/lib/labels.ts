@@ -8,6 +8,7 @@ export const paymentLabels: Record<PaymentMethod, string> = {
 
 export const roleLabels: Record<AppRole, string> = {
   cajero: 'Cajero',
+  portero: 'Portero',
   admin: 'Administrador',
 }
 

@@ -2,11 +2,15 @@ import "@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "@supabase/server";
 
 type CreateUserBody = {
+  action?: string;
+  id?: string;
   email?: string;
   password?: string;
   full_name?: string;
   role?: string;
 };
+
+const roles = ["admin", "cajero", "portero"];
 
 function translateAuthError(message: string) {
   if (/already.*(registered|exists)/i.test(message)) {
@@ -50,10 +54,25 @@ export default {
       return Response.json({ error: "Cuerpo inválido" }, { status: 400 });
     }
 
+    if (body.action === "delete") {
+      const target = String(body.id ?? "");
+      if (!target) {
+        return Response.json({ error: "Falta el usuario" }, { status: 400 });
+      }
+      if (target === userId) {
+        return Response.json({ error: "No puedes eliminar tu propia cuenta" }, { status: 400 });
+      }
+      const { error: deleteError } = await ctx.supabaseAdmin.auth.admin.deleteUser(target);
+      if (deleteError) {
+        return Response.json({ error: translateAuthError(deleteError.message) }, { status: 400 });
+      }
+      return Response.json({ id: target });
+    }
+
     const email = String(body.email ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
     const fullName = String(body.full_name ?? "").trim();
-    const role = body.role === "admin" ? "admin" : "cajero";
+    const role = roles.includes(String(body.role)) ? String(body.role) : "cajero";
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return Response.json({ error: "Correo inválido" }, { status: 400 });

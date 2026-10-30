@@ -39,6 +39,7 @@ function mapSale(row: Sale): Sale {
       quantity: asNumber(item.quantity),
       unit_price: asNumber(item.unit_price),
       unit_cost: asNumber(item.unit_cost),
+      line_total: asNumber(item.line_total),
     })),
   }
 }
@@ -60,7 +61,7 @@ export function SalesPage() {
         .from('sales')
         .select(`
           id, sale_number, created_at, payment_method, subtotal, discount, total, status, void_reason, user_id,
-          sale_items (id, product_name, variant_name, quantity, unit_price, unit_cost),
+          sale_items (id, product_name, variant_name, quantity, unit_price, unit_cost, line_total),
           cashier:profiles!sales_user_id_fkey (full_name)
         `)
         .gte('created_at', start)
@@ -152,7 +153,7 @@ export function SalesPage() {
               {sale.sale_items.map((item) => (
                 <li key={item.id} className="flex justify-between gap-3">
                   <span>{item.quantity} {item.product_name}{item.variant_name ? ` · ${item.variant_name}` : ''}</span>
-                  <span>{formatMoney(item.unit_price * item.quantity)}</span>
+                  <span>{formatMoney(item.line_total)}</span>
                 </li>
               ))}
             </ul>
