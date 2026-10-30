@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ClipboardPen, ShoppingCart } from 'lucide-react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/feedback.tsx'
 import { Badge } from '@/components/ui/badge.tsx'
@@ -162,8 +163,12 @@ export function InventoryPage() {
                 />
               </div>
               <div className="mt-4 flex gap-2">
-                <Button variant="outline" className="h-10 flex-1" onClick={() => open(item, 'ajuste')}>Contar</Button>
-                <Button className="h-10 flex-1" onClick={() => open(item, 'compra')}>Compra</Button>
+                <Button variant="outline" className="h-10 flex-1" onClick={() => open(item, 'ajuste')}>
+                  <ClipboardPen /> Contar
+                </Button>
+                <Button className="h-10 flex-1" onClick={() => open(item, 'compra')}>
+                  <ShoppingCart /> Compra
+                </Button>
               </div>
             </article>
           )

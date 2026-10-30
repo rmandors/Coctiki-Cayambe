@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
+import { LogIn } from 'lucide-react'
 import { Navigate } from 'react-router'
 import { useAuth } from '@/auth/AuthProvider.tsx'
 import { BrandMark } from '@/components/brand.tsx'
@@ -78,7 +79,7 @@ export function LoginPage() {
               {notice ? <p className="text-sm text-amber-200">{notice}</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               <Button type="submit" className="h-12 text-base" disabled={pending}>
-                {pending ? 'Entrando…' : 'Entrar'}
+                {pending ? 'Entrando…' : <><LogIn /> Entrar</>}
               </Button>
             </form>
           )}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider.tsx'
 import { PageHeader } from '@/components/feedback.tsx'
@@ -22,7 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select.tsx'
-import { Switch } from '@/components/ui/switch.tsx'
 import { errorMessage, functionErrorMessage } from '@/lib/format.ts'
 import { roleLabels } from '@/lib/labels.ts'
 import { supabase } from '@/lib/supabase.ts'
@@ -73,10 +73,9 @@ export function UsersPage() {
   })
 
   const updateUser = useMutation({
-    mutationFn: async (change: { id: string; role?: AppRole; active?: boolean; full_name?: string }) => {
+    mutationFn: async (change: { id: string; role?: AppRole; full_name?: string }) => {
       const { error } = await supabase.from('profiles').update({
         ...(change.role ? { role: change.role } : {}),
-        ...(change.active === undefined ? {} : { active: change.active }),
         ...(change.full_name === undefined ? {} : { full_name: change.full_name }),
       }).eq('id', change.id)
       if (error) throw new Error(error.message)
@@ -110,19 +109,18 @@ export function UsersPage() {
       <PageHeader
         title="Usuarios"
         description="El cajero factura el menú, sin entradas ni barra libre. Portería solo vende esas dos. El administrador ve todo."
-        action={<Button className="h-11" onClick={() => setOpen(true)}>Nuevo usuario</Button>}
+        action={<Button className="h-11" onClick={() => setOpen(true)}><UserPlus /> Nuevo usuario</Button>}
       />
       {usersQuery.isError ? <p className="mb-3 text-sm text-destructive">{errorMessage(usersQuery.error)}</p> : null}
       <div className="grid gap-3">
         {(usersQuery.data ?? []).map((person) => (
           <UserRow
-            key={`${person.id}:${person.full_name}:${person.role}:${person.active}`}
+            key={`${person.id}:${person.full_name}:${person.role}`}
             person={person}
             isSelf={person.id === profile?.id}
             pending={updateUser.isPending || deleteUser.isPending}
             onRename={(fullName) => updateUser.mutate({ id: person.id, full_name: fullName })}
             onRole={(next) => updateUser.mutate({ id: person.id, role: next })}
-            onActive={(active) => updateUser.mutate({ id: person.id, active })}
             onDelete={() => setRemoving(person)}
           />
         ))}
@@ -175,7 +173,7 @@ export function UsersPage() {
               disabled={deleteUser.isPending || !removing}
               onClick={() => { if (removing) deleteUser.mutate(removing.id) }}
             >
-              {deleteUser.isPending ? 'Eliminando…' : 'Eliminar'}
+              {deleteUser.isPending ? 'Eliminando…' : <><Trash2 /> Eliminar</>}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -205,7 +203,6 @@ function UserRow({
   pending,
   onRename,
   onRole,
-  onActive,
   onDelete,
 }: {
   person: Profile
@@ -213,7 +210,6 @@ function UserRow({
   pending: boolean
   onRename: (fullName: string) => void
   onRole: (role: AppRole) => void
-  onActive: (active: boolean) => void
   onDelete: () => void
 }) {
   const [name, setName] = useState(person.full_name)
@@ -243,17 +239,8 @@ function UserRow({
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <RoleSelect value={person.role} disabled={isSelf || pending} onChange={onRole} />
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Switch
-            checked={person.active}
-            disabled={isSelf || pending}
-            onCheckedChange={onActive}
-            aria-label={`Activar ${person.full_name}`}
-          />
-          Activo
-        </label>
-        <Button variant="outline" className="h-11" disabled={isSelf || pending} onClick={onDelete}>
-          Eliminar
+        <Button variant="destructive" className="h-11" disabled={isSelf || pending} onClick={onDelete}>
+          <Trash2 /> Eliminar
         </Button>
       </div>
     </article>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Ban } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider.tsx'
 import { EmptyState, PageHeader } from '@/components/feedback.tsx'
@@ -163,7 +164,7 @@ export function SalesPage() {
             {sale.void_reason ? <p className="mt-2 text-sm">Motivo: {sale.void_reason}</p> : null}
             {profile?.role === 'admin' && sale.status === 'completada' ? (
               <Button variant="destructive" className="mt-3 h-10" onClick={() => { setVoiding(sale); setReason('') }}>
-                Anular
+                <Ban /> Anular
               </Button>
             ) : null}
           </article>
