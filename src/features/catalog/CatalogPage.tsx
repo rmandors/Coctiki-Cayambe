@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { EmptyState, PageHeader } from '@/components/feedback.tsx'
 import { Button } from '@/components/ui/button.tsx'
@@ -184,7 +185,7 @@ function ItemsPanel({ items, onSaved }: { items: InventoryItem[]; onSaved: () =>
   return (
     <div>
       <div className="mb-3 flex justify-end">
-        <Button className="h-11" onClick={() => setCreating(true)}>Nuevo insumo</Button>
+        <Button className="h-11" onClick={() => setCreating(true)}><Plus /> Nuevo insumo</Button>
       </div>
       <div className="grid gap-2">
         {items.map((item) => (
@@ -354,7 +355,7 @@ function ProductsPanel({
   return (
     <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
       <div>
-        <Button className="mb-3 h-11 w-full" onClick={() => setCreating(true)}>Nuevo producto</Button>
+        <Button className="mb-3 h-11 w-full" onClick={() => setCreating(true)}><Plus /> Nuevo producto</Button>
         <div className="grid gap-2">
           {products.map((product) => (
             <button
@@ -717,6 +718,9 @@ function ProductEditor({
         </section>
       ) : null}
 
+      {doorOnly ? (
+        <p className="text-sm text-muted-foreground">Este producto se cobra y no descuenta inventario.</p>
+      ) : (
       <section className="grid gap-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -794,6 +798,7 @@ function ProductEditor({
           Guardar receta
         </Button>
       </section>
+      )}
     </div>
   )
 }
