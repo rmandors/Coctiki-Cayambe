@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Minus, Plus, Printer } from 'lucide-react'
+import { Banknote, CreditCard, Minus, Plus, Printer, Receipt, ArrowRightLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider.tsx'
 import { EmptyState } from '@/components/feedback.tsx'
@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/sheet.tsx'
 import { asNumber, errorMessage, formatDateTime, formatMoney, formatStock, roundMoney } from '@/lib/format.ts'
 import { paymentLabels } from '@/lib/labels.ts'
-import { bundleTotal, priceLines, tierLabel } from '@/lib/pricing.ts'
+import { bundleTotal, priceLines, promoLabel } from '@/lib/pricing.ts'
 import { supabase } from '@/lib/supabase.ts'
 import type { CartLine, PaymentMethod, Product, SaleResult, StockWarning } from '@/lib/types.ts'
 
@@ -40,7 +40,11 @@ type Receipt = {
   warnings: StockWarning[]
 }
 
-const payments: PaymentMethod[] = ['efectivo', 'transferencia', 'tarjeta']
+const payments: { method: PaymentMethod; icon: typeof Banknote }[] = [
+  { method: 'efectivo', icon: Banknote },
+  { method: 'transferencia', icon: ArrowRightLeft },
+  { method: 'tarjeta', icon: CreditCard },
+]
 
 function parseSaleResult(data: unknown): SaleResult {
   const row = data as SaleResult
@@ -93,9 +97,9 @@ export function PosPage() {
 
   const [category, setCategory] = useState('Todas')
   const [cart, setCart] = useState<CartLine[]>([])
-  const [flavorProduct, setFlavorProduct] = useState<Product | null>(null)
+  const [pickProduct, setPickProduct] = useState<Product | null>(null)
   const [flavorId, setFlavorId] = useState<string | null>(null)
-  const [flavorQty, setFlavorQty] = useState(1)
+  const [pickQty, setPickQty] = useState(1)
   const [discountMode, setDiscountMode] = useState<DiscountMode>('monto')
   const [discountValue, setDiscountValue] = useState('')
   const [payment, setPayment] = useState<PaymentMethod>('efectivo')
@@ -164,23 +168,13 @@ export function PosPage() {
   }
 
   function openProduct(product: Product) {
-    if (product.requires_variant) {
-      if (product.product_variants.length === 0) {
-        toast.error(`${product.name} no tiene sabores activos`)
-        return
-      }
-      setFlavorProduct(product)
-      setFlavorId(product.product_variants[0]?.id ?? null)
-      setFlavorQty(1)
+    if (product.requires_variant && product.product_variants.length === 0) {
+      toast.error(`${product.name} no tiene sabores activos`)
       return
     }
-    addLine({
-      productId: product.id,
-      variantId: null,
-      name: product.name,
-      variantName: null,
-      unitPrice: product.price,
-    })
+    setPickProduct(product)
+    setFlavorId(product.requires_variant ? product.product_variants[0]?.id ?? null : null)
+    setPickQty(1)
   }
 
   const sale = useMutation({
@@ -280,14 +274,15 @@ export function PosPage() {
         />
       </div>
       <div className="grid grid-cols-3 gap-2">
-        {payments.map((method) => (
+        {payments.map(({ method, icon: Icon }) => (
           <Button
             key={method}
             type="button"
             variant={payment === method ? 'default' : 'outline'}
-            className="h-11 px-2 text-xs sm:text-sm"
+            className="h-auto min-h-14 w-full min-w-0 flex-col gap-1 whitespace-normal px-1 py-2 text-xs leading-tight"
             onClick={() => setPayment(method)}
           >
+            <Icon />
             {paymentLabels[method]}
           </Button>
         ))}
@@ -298,7 +293,7 @@ export function PosPage() {
         <div className="flex justify-between font-heading text-2xl"><dt>Total</dt><dd>{formatMoney(total)}</dd></div>
       </dl>
       <Button className="h-14 text-base" disabled={cart.length === 0 || sale.isPending} onClick={() => sale.mutate()}>
-        {sale.isPending ? 'Registrando…' : 'Registrar venta'}
+        {sale.isPending ? 'Registrando…' : <><Receipt /> Registrar venta</>}
       </Button>
     </div>
   )
@@ -309,8 +304,8 @@ export function PosPage() {
         <h1 className="font-heading text-3xl">Facturación</h1>
         <p className="text-sm text-muted-foreground">
           {profile?.role === 'portero'
-            ? 'Entrada y barra libre.'
-            : 'Elige el producto. Si es jarra, confirma el sabor antes de cobrar.'}
+            ? 'Entrada y barra libre. Elige la cantidad al tocar.'
+            : 'Toca un producto y elige la cantidad. Si pide sabor, confírmalo.'}
         </p>
       </div>
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
@@ -355,14 +350,7 @@ export function PosPage() {
                   <span className="block text-xs tracking-wide text-muted-foreground uppercase">{product.category}</span>
                   <span className="font-heading mt-1 block text-xl">{product.name}</span>
                 </span>
-                <span className="text-sm font-medium text-primary">
-                  {tierLabel(
-                    product.price,
-                    (product.product_price_tiers ?? []).map((tier) => ({ quantity: tier.quantity, total: tier.total_price })),
-                    formatMoney,
-                  )}
-                  {product.requires_variant ? ' · sabor' : ''}
-                </span>
+                <span className="text-sm font-medium text-primary">{formatMoney(product.price)}</span>
               </button>
             )
           })}
@@ -388,39 +376,43 @@ export function PosPage() {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={flavorProduct !== null} onOpenChange={(open) => { if (!open) setFlavorProduct(null) }}>
+      <Dialog open={pickProduct !== null} onOpenChange={(open) => { if (!open) setPickProduct(null) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-heading text-2xl">{flavorProduct?.name}</DialogTitle>
+            <DialogTitle className="font-heading text-2xl">{pickProduct?.name}</DialogTitle>
             <DialogDescription>
-              {(flavorProduct?.product_price_tiers?.length ?? 0) > 0
-                ? `Puedes mezclar sabores. ${tierLabel(
-                    flavorProduct?.price ?? 0,
-                    (flavorProduct?.product_price_tiers ?? []).map((tier) => ({ quantity: tier.quantity, total: tier.total_price })),
-                    formatMoney,
-                  )}`
-                : 'Elige el sabor y la cantidad.'}
+              {pickProduct
+                ? [
+                    pickProduct.requires_variant ? 'Puedes mezclar sabores.' : null,
+                    promoLabel(
+                      (pickProduct.product_price_tiers ?? []).map((tier) => ({ quantity: tier.quantity, total: tier.total_price })),
+                      formatMoney,
+                    ) || (pickProduct.requires_variant ? 'Elige el sabor y la cantidad.' : 'Elige la cantidad.'),
+                  ].filter(Boolean).join(' ')
+                : ''}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-2">
-            {flavorProduct?.product_variants.map((variant) => (
-              <Button
-                key={variant.id}
-                type="button"
-                variant={flavorId === variant.id ? 'default' : 'outline'}
-                className="h-12"
-                onClick={() => setFlavorId(variant.id)}
-              >
-                {variant.name}
-              </Button>
-            ))}
-          </div>
+          {pickProduct?.requires_variant ? (
+            <div className="grid grid-cols-2 gap-2">
+              {pickProduct.product_variants.map((variant) => (
+                <Button
+                  key={variant.id}
+                  type="button"
+                  variant={flavorId === variant.id ? 'default' : 'outline'}
+                  className="h-12"
+                  onClick={() => setFlavorId(variant.id)}
+                >
+                  {variant.name}
+                </Button>
+              ))}
+            </div>
+          ) : null}
           <div className="flex items-center justify-center gap-3">
-            <Button variant="outline" size="icon-lg" onClick={() => setFlavorQty((value) => Math.max(1, value - 1))} aria-label="Menos">
+            <Button variant="outline" size="icon-lg" onClick={() => setPickQty((value) => Math.max(1, value - 1))} aria-label="Menos">
               <Minus />
             </Button>
-            <span className="w-10 text-center text-2xl font-semibold">{flavorQty}</span>
-            <Button variant="outline" size="icon-lg" onClick={() => setFlavorQty((value) => value + 1)} aria-label="Más">
+            <span className="w-10 text-center text-2xl font-semibold">{pickQty}</span>
+            <Button variant="outline" size="icon-lg" onClick={() => setPickQty((value) => value + 1)} aria-label="Más">
               <Plus />
             </Button>
           </div>
@@ -428,17 +420,20 @@ export function PosPage() {
             <Button
               className="h-12 w-full"
               onClick={() => {
-                const variant = flavorProduct?.product_variants.find((item) => item.id === flavorId)
-                if (!flavorProduct || !variant) return
+                if (!pickProduct) return
+                const variant = pickProduct.requires_variant
+                  ? pickProduct.product_variants.find((item) => item.id === flavorId)
+                  : null
+                if (pickProduct.requires_variant && !variant) return
                 addLine({
-                  productId: flavorProduct.id,
-                  variantId: variant.id,
-                  name: flavorProduct.name,
-                  variantName: variant.name,
-                  unitPrice: variant.price ?? flavorProduct.price,
-                  quantity: flavorQty,
+                  productId: pickProduct.id,
+                  variantId: variant?.id ?? null,
+                  name: pickProduct.name,
+                  variantName: variant?.name ?? null,
+                  unitPrice: variant?.price ?? pickProduct.price,
+                  quantity: pickQty,
                 })
-                setFlavorProduct(null)
+                setPickProduct(null)
               }}
             >
               Agregar

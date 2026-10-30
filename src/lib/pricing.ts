@@ -32,10 +32,10 @@ export function bundleTotal(basePrice: number, quantity: number, tiers: PriceTie
   return cents / 100
 }
 
-export function tierLabel(basePrice: number, tiers: PriceTier[], format: (value: number) => string) {
+export function promoLabel(tiers: PriceTier[], format: (value: number) => string) {
   const ordered = [...tiers].filter((tier) => tier.quantity > 1).sort((a, b) => a.quantity - b.quantity)
-  if (ordered.length === 0) return format(basePrice)
-  return [`1 ${format(basePrice)}`, ...ordered.map((tier) => `${tier.quantity} ${format(tier.total)}`)].join(' · ')
+  if (ordered.length === 0) return ''
+  return ordered.map((tier) => `${tier.quantity} por ${format(tier.total)}`).join(' · ')
 }
 
 export function priceLines<T extends { key: string; productId: string; quantity: number; unitPrice: number }>(
