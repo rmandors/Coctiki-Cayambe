@@ -61,7 +61,7 @@ export function SalesPage() {
       let request = supabase
         .from('sales')
         .select(`
-          id, sale_number, created_at, payment_method, subtotal, discount, total, status, void_reason, user_id,
+          id, sale_number, created_at, payment_method, subtotal, discount, total, status, note, void_reason, user_id,
           sale_items (id, product_name, variant_name, quantity, unit_price, unit_cost, line_total),
           cashier:profiles!sales_user_id_fkey (full_name)
         `)
@@ -161,6 +161,7 @@ export function SalesPage() {
             {sale.discount > 0 ? (
               <p className="mt-2 text-sm text-muted-foreground">Descuento {formatMoney(sale.discount)}</p>
             ) : null}
+            {sale.note ? <p className="mt-2 text-sm">Nota: {sale.note}</p> : null}
             {sale.void_reason ? <p className="mt-2 text-sm">Motivo: {sale.void_reason}</p> : null}
             {profile?.role === 'admin' && sale.status === 'completada' ? (
               <Button variant="destructive" className="mt-3 h-10" onClick={() => { setVoiding(sale); setReason('') }}>

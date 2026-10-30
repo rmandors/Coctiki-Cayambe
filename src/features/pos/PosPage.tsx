@@ -14,6 +14,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog.tsx'
 import { Input } from '@/components/ui/input.tsx'
+import { Label } from '@/components/ui/label.tsx'
+import { Textarea } from '@/components/ui/textarea.tsx'
 import {
   Sheet,
   SheetContent,
@@ -37,6 +39,7 @@ type Receipt = {
   discount: number
   total: number
   payment: PaymentMethod
+  note: string
   warnings: StockWarning[]
 }
 
@@ -103,6 +106,7 @@ export function PosPage() {
   const [discountMode, setDiscountMode] = useState<DiscountMode>('monto')
   const [discountValue, setDiscountValue] = useState('')
   const [payment, setPayment] = useState<PaymentMethod>('efectivo')
+  const [note, setNote] = useState('')
   const [cartOpen, setCartOpen] = useState(false)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
 
@@ -187,6 +191,7 @@ export function PosPage() {
         })),
         p_payment_method: payment,
         p_discount: discount,
+        p_note: note.trim() || null,
       })
       if (error) throw new Error(error.message)
       return parseSaleResult(data)
@@ -200,10 +205,12 @@ export function PosPage() {
         discount: result.discount,
         total: result.total,
         payment: result.payment_method,
+        note: note.trim(),
         warnings: result.warnings,
       })
       setCart([])
       setDiscountValue('')
+      setNote('')
       setCartOpen(false)
       if (result.warnings.some((warning) => warning.level === 'negativo')) {
         toast.warning('Venta registrada. Hay insumos en negativo.')
@@ -286,6 +293,16 @@ export function PosPage() {
             {paymentLabels[method]}
           </Button>
         ))}
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor="sale-note">Nota (opcional)</Label>
+        <Textarea
+          id="sale-note"
+          maxLength={300}
+          placeholder="Algo para recordar de esta venta"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
       </div>
       <dl className="grid gap-1 text-sm">
         <div className="flex justify-between"><dt>Subtotal</dt><dd>{formatMoney(subtotal)}</dd></div>
@@ -467,6 +484,7 @@ export function PosPage() {
               <div className="flex justify-between text-sm"><span>Descuento</span><span>-{formatMoney(receipt.discount)}</span></div>
               <div className="mt-1 flex justify-between text-lg font-semibold"><span>Total</span><span>{formatMoney(receipt.total)}</span></div>
               <p className="mt-2 text-sm">{paymentLabels[receipt.payment]}</p>
+              {receipt.note ? <p className="mt-2 text-sm">Nota: {receipt.note}</p> : null}
               <p className="mt-4 text-center text-xs">Gracias</p>
             </div>
           ) : null}

@@ -18,7 +18,7 @@ El rol vive en la base de datos, no en datos que el usuario pueda editar. Un caj
 
 ## Secciones
 
-**Facturación.** Grilla del menú. Si el producto pide sabor, se elige antes de agregarlo. La cuenta lleva cantidad, descuento (monto o porcentaje) y pago en efectivo, transferencia o tarjeta. Al registrar, se imprime un comprobante interno. Si el stock queda en cero o negativo, la venta igual se guarda y el comprobante avisa.
+**Facturación.** Grilla del menú. Si el producto pide sabor, se elige antes de agregarlo. La cuenta lleva cantidad, descuento (monto o porcentaje), pago en efectivo, transferencia o tarjeta, y una nota opcional. Al registrar, se imprime un comprobante interno. Si el stock queda en cero o negativo, la venta igual se guarda y el comprobante avisa.
 
 **Ventas.** Historial del día. El administrador puede anular una venta; al anularla, el inventario vuelve.
 

@@ -78,6 +78,7 @@ export type Sale = {
   discount: number
   total: number
   status: SaleStatus
+  note: string | null
   void_reason: string | null
   user_id: string
   sale_items: SaleItem[]
