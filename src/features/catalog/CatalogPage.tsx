@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { EmptyState, PageHeader } from '@/components/feedback.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -353,7 +354,7 @@ function ProductsPanel({
   })
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
+    <div className="grid items-start gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
       <div>
         <Button className="mb-3 h-11 w-full" onClick={() => setCreating(true)}><Plus /> Nuevo producto</Button>
         <div className="grid gap-2">
@@ -373,7 +374,18 @@ function ProductsPanel({
         </div>
       </div>
       {selected ? (
-        <ProductEditor key={selected.id} product={selected} items={items} recipes={recipes} onSaved={onSaved} />
+        <ProductEditor
+          key={selected.id}
+          product={selected}
+          items={items}
+          recipes={recipes}
+          onSaved={onSaved}
+          onDeleted={() => {
+            const rest = products.filter((item) => item.id !== selected.id)
+            setSelectedId(rest[0]?.id ?? null)
+            onSaved()
+          }}
+        />
       ) : (
         <EmptyState title="Sin productos" detail="Crea el primero para armar el menú." />
       )}
@@ -446,7 +458,7 @@ function PriceTiersEditor({ productId }: { productId: string }) {
   })
 
   return (
-    <section className="grid gap-3">
+    <section className="grid gap-2">
       <div>
         <h2 className="font-heading text-xl">Precio por cantidad</h2>
         <p className="text-sm text-muted-foreground">El precio de una unidad es el del producto. Desde 2, el total puede ser otro aunque se mezclen sabores.</p>
@@ -457,9 +469,9 @@ function PriceTiersEditor({ productId }: { productId: string }) {
           <Button variant="outline" className="h-9" onClick={() => remove.mutate(tier.id)}>Quitar</Button>
         </div>
       ))}
-      <div className="flex flex-wrap gap-2">
-        <Input className="max-w-28" inputMode="numeric" placeholder="Cantidad" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
-        <Input className="max-w-32" inputMode="decimal" placeholder="Precio total" value={total} onChange={(event) => setTotal(event.target.value)} />
+      <div className="grid grid-cols-[minmax(0,7rem)_minmax(0,9rem)_auto] items-center gap-2">
+        <Input inputMode="numeric" placeholder="Cantidad" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
+        <Input inputMode="decimal" placeholder="Precio total" value={total} onChange={(event) => setTotal(event.target.value)} />
         <Button variant="outline" className="h-11" disabled={save.isPending} onClick={() => save.mutate()}>Agregar</Button>
       </div>
     </section>
@@ -534,11 +546,13 @@ function ProductEditor({
   items,
   recipes,
   onSaved,
+  onDeleted,
 }: {
   product: Product
   items: InventoryItem[]
   recipes: RecipeItem[]
   onSaved: () => void
+  onDeleted: () => void
 }) {
   const [name, setName] = useState(product.name)
   const [category, setCategory] = useState(product.category)
@@ -549,6 +563,7 @@ function ProductEditor({
   const [scope, setScope] = useState('base')
   const [variantName, setVariantName] = useState('')
   const [variantPrice, setVariantPrice] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const recipeKey = `${product.id}:${scope}`
   const serverLines = useMemo(() => {
     const variantId = scope === 'base' ? null : scope
@@ -585,6 +600,19 @@ function ProductEditor({
     onSuccess: () => {
       toast.success('Producto actualizado')
       onSaved()
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  })
+
+  const deleteProduct = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from('products').delete().eq('id', product.id)
+      if (error) throw new Error(error.message)
+    },
+    onSuccess: () => {
+      toast.success('Producto eliminado')
+      setConfirmDelete(false)
+      onDeleted()
     },
     onError: (error) => toast.error(errorMessage(error)),
   })
@@ -660,8 +688,8 @@ function ProductEditor({
   const selectedItem = (line: DraftLine) => items.find((item) => item.id === line.inventoryItemId)
 
   return (
-    <div className="grid gap-5 rounded-3xl border border-border bg-card p-4">
-      <div className="grid gap-3 md:grid-cols-2">
+    <div className="flex flex-col gap-4 self-start rounded-3xl border border-border bg-card p-4">
+      <div className="grid gap-2 sm:grid-cols-3">
         <div className="grid gap-1.5">
           <Label htmlFor="product-name">Nombre</Label>
           <Input id="product-name" value={name} onChange={(event) => setName(event.target.value)} />
@@ -674,20 +702,55 @@ function ProductEditor({
           <Label htmlFor="product-price">Precio</Label>
           <Input id="product-price" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} />
         </div>
-        <div className="flex items-end justify-between gap-4 pb-1">
-          <label className="flex items-center gap-2 text-sm">Pide sabor <Switch checked={requiresVariant} onCheckedChange={setRequiresVariant} /></label>
-          <label className="flex items-center gap-2 text-sm">Solo portería <Switch checked={doorOnly} onCheckedChange={setDoorOnly} /></label>
-          <label className="flex items-center gap-2 text-sm">Activo <Switch checked={active} onCheckedChange={setActive} /></label>
-        </div>
       </div>
-      <Button className="h-11 w-fit" disabled={saveProduct.isPending} onClick={() => saveProduct.mutate()}>
-        Guardar producto
-      </Button>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border px-3 text-sm">
+          Pide sabor
+          <Switch checked={requiresVariant} onCheckedChange={setRequiresVariant} />
+        </label>
+        <label className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border px-3 text-sm">
+          Solo portería
+          <Switch checked={doorOnly} onCheckedChange={setDoorOnly} />
+        </label>
+        <label className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border px-3 text-sm">
+          Activo
+          <Switch checked={active} onCheckedChange={setActive} />
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button className="h-11" disabled={saveProduct.isPending} onClick={() => saveProduct.mutate()}>
+          Guardar producto
+        </Button>
+        <Button variant="destructive" className="h-11" onClick={() => setConfirmDelete(true)}>
+          <Trash2 /> Eliminar producto
+        </Button>
+      </div>
+
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar producto</DialogTitle>
+            <DialogDescription>
+              {product.name} saldrá del menú. Las ventas ya registradas se conservan. Esta acción no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDelete(false)}>Cancelar</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteProduct.isPending}
+              onClick={() => deleteProduct.mutate()}
+            >
+              {deleteProduct.isPending ? 'Eliminando…' : 'Eliminar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PriceTiersEditor productId={product.id} />
 
       {requiresVariant ? (
-        <section className="grid gap-3">
+        <section className="grid gap-2">
           <h2 className="font-heading text-xl">Sabores</h2>
           {product.product_variants.map((variant) => (
             <VariantRow
@@ -697,9 +760,9 @@ function ProductEditor({
               onSave={(input) => saveVariant.mutate(input)}
             />
           ))}
-          <div className="flex flex-wrap gap-2">
-            <Input className="max-w-48" placeholder="Nuevo sabor" value={variantName} onChange={(event) => setVariantName(event.target.value)} />
-            <Input className="max-w-32" inputMode="decimal" placeholder="Precio opcional" value={variantPrice} onChange={(event) => setVariantPrice(event.target.value)} />
+          <div className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_auto]">
+            <Input placeholder="Nuevo sabor" value={variantName} onChange={(event) => setVariantName(event.target.value)} />
+            <Input inputMode="decimal" placeholder="Precio opcional" value={variantPrice} onChange={(event) => setVariantPrice(event.target.value)} />
             <Button
               variant="outline"
               className="h-11"
@@ -721,8 +784,8 @@ function ProductEditor({
       {doorOnly ? (
         <p className="text-sm text-muted-foreground">Este producto se cobra y no descuenta inventario.</p>
       ) : (
-      <section className="grid gap-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+      <section className="grid gap-2">
+        <div className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_13rem]">
           <div>
             <h2 className="font-heading text-xl">Receta</h2>
             <p className="text-sm text-muted-foreground">
@@ -730,7 +793,7 @@ function ProductEditor({
             </p>
           </div>
           <Select value={scope} onValueChange={setScope}>
-            <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="base">Receta base</SelectItem>
               {product.product_variants.filter((variant) => variant.active).map((variant) => (
@@ -746,7 +809,8 @@ function ProductEditor({
             ? line.mode === 'rinde' ? 1 / amount : amount
             : null
           return (
-            <div key={line.key} className="grid gap-2 rounded-2xl bg-muted/50 p-3 md:grid-cols-[minmax(0,1fr)_8rem_8rem_auto]">
+            <div key={line.key} className="rounded-2xl bg-muted/50 p-3">
+              <div className="grid items-center gap-2 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_7rem_auto]">
               <Select
                 value={line.inventoryItemId || undefined}
                 onValueChange={(value) => setLines((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, inventoryItemId: value } : entry))}
@@ -773,9 +837,10 @@ function ProductEditor({
                 value={line.amount}
                 onChange={(event) => setLines((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, amount: event.target.value } : entry))}
               />
-              <Button variant="ghost" onClick={() => setLines((current) => current.filter((_, entryIndex) => entryIndex !== index))}>Quitar</Button>
+              <Button variant="ghost" className="h-11" onClick={() => setLines((current) => current.filter((_, entryIndex) => entryIndex !== index))}>Quitar</Button>
+              </div>
               {perSale !== null && item ? (
-                <p className="text-xs text-muted-foreground md:col-span-4">
+                <p className="mt-2 text-xs text-muted-foreground">
                   Cada venta descuenta {formatQty(perSale)} {unitOptions.find((option) => option.value === item.unit)?.label.toLowerCase()}.
                 </p>
               ) : null}
@@ -816,12 +881,13 @@ function VariantRow({
   const [price, setPrice] = useState(variant.price === null ? '' : String(variant.price))
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Input className="max-w-48" value={name} onChange={(event) => setName(event.target.value)} />
-      <Input className="max-w-32" inputMode="decimal" placeholder="Precio del producto" value={price} onChange={(event) => setPrice(event.target.value)} />
+    <div className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_auto_auto]">
+      <Input value={name} onChange={(event) => setName(event.target.value)} />
+      <Input inputMode="decimal" placeholder="Precio del producto" value={price} onChange={(event) => setPrice(event.target.value)} />
       <Switch checked={variant.active} onCheckedChange={(checked) => onSave({ id: variant.id, name: name.trim() || variant.name, price: variant.price, active: checked })} />
       <Button
         variant="outline"
+        className="h-11"
         disabled={pending}
         onClick={() => {
           const parsed = price.trim() === '' ? null : numberOrNull(price)
