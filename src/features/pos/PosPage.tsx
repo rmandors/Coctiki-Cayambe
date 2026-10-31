@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Banknote, CreditCard, Minus, Plus, Printer, Receipt, ArrowRightLeft } from 'lucide-react'
+import { ArrowRightLeft, Banknote, ChevronLeft, ChevronRight, CreditCard, Minus, Plus, Printer, Receipt } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider.tsx'
 import { EmptyState } from '@/components/feedback.tsx'
@@ -27,7 +27,7 @@ import { asNumber, errorMessage, formatDateTime, formatMoney, formatStock, round
 import { paymentLabels } from '@/lib/labels.ts'
 import { bundleTotal, priceLines, promoLabel } from '@/lib/pricing.ts'
 import { supabase } from '@/lib/supabase.ts'
-import type { CartLine, PaymentMethod, Product, SaleResult, StockWarning } from '@/lib/types.ts'
+import type { CartLine, PaymentMethod, Product, ProductVariant, SaleResult, StockWarning } from '@/lib/types.ts'
 
 type DiscountMode = 'monto' | 'porcentaje'
 
@@ -48,6 +48,63 @@ const payments: { method: PaymentMethod; icon: typeof Banknote }[] = [
   { method: 'transferencia', icon: ArrowRightLeft },
   { method: 'tarjeta', icon: CreditCard },
 ]
+
+function FlavorPages({
+  flavors,
+  flavorId,
+  page,
+  onPage,
+  onPick,
+}: {
+  flavors: ProductVariant[]
+  flavorId: string | null
+  page: number
+  onPage: (page: number) => void
+  onPick: (id: string) => void
+}) {
+  const pageCount = flavors.length > 8 ? 2 : 1
+  const pageSize = Math.ceil(flavors.length / pageCount)
+  const current = Math.min(page, pageCount - 1)
+  const visible = flavors.slice(current * pageSize, current * pageSize + pageSize)
+
+  return (
+    <div className="grid gap-2">
+      <div className="grid grid-cols-2 gap-2">
+        {visible.map((variant) => (
+          <Button
+            key={variant.id}
+            type="button"
+            variant={flavorId === variant.id ? 'default' : 'outline'}
+            className="h-auto min-h-12 whitespace-normal px-2 text-center text-sm leading-tight"
+            onClick={() => onPick(variant.id)}
+          >
+            {variant.name}
+          </Button>
+        ))}
+      </div>
+      {pageCount > 1 ? (
+        <div className="flex items-center justify-center gap-3">
+          <Button type="button" variant="outline" className="size-11" disabled={current === 0} onClick={() => onPage(current - 1)} aria-label="Sabores anteriores">
+            <ChevronLeft />
+          </Button>
+          <span className="min-w-16 text-center text-sm text-muted-foreground">{current + 1} de {pageCount}</span>
+          <Button type="button" variant="outline" className="size-11" disabled={current >= pageCount - 1} onClick={() => onPage(current + 1)} aria-label="Más sabores">
+            <ChevronRight />
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function productPickHint(product: Product) {
+  const promo = promoLabel(
+    (product.product_price_tiers ?? []).map((tier) => ({ quantity: tier.quantity, total: tier.total_price })),
+    formatMoney,
+  )
+  if (promo) return `Promos: ${promo}`
+  return product.requires_variant ? 'Elige el sabor y la cantidad.' : 'Elige la cantidad.'
+}
 
 function parseSaleResult(data: unknown): SaleResult {
   const row = data as SaleResult
@@ -102,6 +159,7 @@ export function PosPage() {
   const [cart, setCart] = useState<CartLine[]>([])
   const [pickProduct, setPickProduct] = useState<Product | null>(null)
   const [flavorId, setFlavorId] = useState<string | null>(null)
+  const [flavorPage, setFlavorPage] = useState(0)
   const [pickQty, setPickQty] = useState(1)
   const [discountMode, setDiscountMode] = useState<DiscountMode>('monto')
   const [discountValue, setDiscountValue] = useState('')
@@ -178,6 +236,7 @@ export function PosPage() {
     }
     setPickProduct(product)
     setFlavorId(product.requires_variant ? product.product_variants[0]?.id ?? null : null)
+    setFlavorPage(0)
     setPickQty(1)
   }
 
@@ -394,35 +453,21 @@ export function PosPage() {
       </Sheet>
 
       <Dialog open={pickProduct !== null} onOpenChange={(open) => { if (!open) setPickProduct(null) }}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="font-heading text-2xl">{pickProduct?.name}</DialogTitle>
             <DialogDescription>
-              {pickProduct
-                ? [
-                    pickProduct.requires_variant ? 'Puedes mezclar sabores.' : null,
-                    promoLabel(
-                      (pickProduct.product_price_tiers ?? []).map((tier) => ({ quantity: tier.quantity, total: tier.total_price })),
-                      formatMoney,
-                    ) || (pickProduct.requires_variant ? 'Elige el sabor y la cantidad.' : 'Elige la cantidad.'),
-                  ].filter(Boolean).join(' ')
-                : ''}
+              {pickProduct ? productPickHint(pickProduct) : ''}
             </DialogDescription>
           </DialogHeader>
           {pickProduct?.requires_variant ? (
-            <div className="grid grid-cols-2 gap-2">
-              {pickProduct.product_variants.map((variant) => (
-                <Button
-                  key={variant.id}
-                  type="button"
-                  variant={flavorId === variant.id ? 'default' : 'outline'}
-                  className="h-12"
-                  onClick={() => setFlavorId(variant.id)}
-                >
-                  {variant.name}
-                </Button>
-              ))}
-            </div>
+            <FlavorPages
+              flavors={pickProduct.product_variants}
+              flavorId={flavorId}
+              page={flavorPage}
+              onPage={setFlavorPage}
+              onPick={setFlavorId}
+            />
           ) : null}
           <div className="flex items-center justify-center gap-3">
             <Button variant="outline" size="icon-lg" onClick={() => setPickQty((value) => Math.max(1, value - 1))} aria-label="Menos">

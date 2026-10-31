@@ -34,7 +34,7 @@ El rol vive en la base de datos, no en datos que el usuario pueda editar. Un caj
 
 Una jarra o una botella Coctiki cuesta $8. Dos, aunque sean de sabores distintos, cuestan $15. Tres cuestan $20. De cuatro en adelante se arma con esos paquetes: cuatro salen a $28, cinco a $35 y seis a $40. En el menú se ve el precio de una; la promo aparece al elegir el producto.
 
-Una jarra descuenta 0.1667 galón del sabor vendido, porque un galón rinde seis jarras. Una botella Coctiki también pide sabor en la cuenta, pero descuenta una unidad de un solo insumo, Botella Coctiki. Las demás botellas, las latas y el cigarrillo descuentan una unidad de su propio insumo. Entrada y barra libre se cobran y no mueven el inventario. El costo de la receta se guarda en la línea de la venta y no cambia si después cambia el costo del insumo.
+Una jarra descuenta 0.1667 galón del sabor vendido, porque un galón rinde seis jarras. Una botella Coctiki descuenta una unidad de ese sabor. Las demás botellas, las latas y el cigarrillo descuentan una unidad de su propio insumo. Entrada y barra libre se cobran y no mueven el inventario. El costo de la receta se guarda en la línea de la venta y no cambia si después cambia el costo del insumo.
 
 El margen de los indicadores compara lo cobrado, ya con descuento, contra ese costo guardado. El catálogo muestra aparte el margen teórico con los costos de hoy.
 
