@@ -5,12 +5,25 @@ import { PageHeader } from '@/components/feedback.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import { Input } from '@/components/ui/input.tsx'
 import { Label } from '@/components/ui/label.tsx'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select.tsx'
 import { addDays, asNumber, errorMessage, formatDay, formatMoney, formatPercent, todayISO } from '@/lib/format.ts'
-import { paymentLabels } from '@/lib/labels.ts'
+import { paymentLabels, roleLabels } from '@/lib/labels.ts'
 import { supabase } from '@/lib/supabase.ts'
-import type { InventoryItem, Kpis, PaymentMethod, Product, RecipeItem } from '@/lib/types.ts'
+import type { AppRole, InventoryItem, Kpis, PaymentMethod, Product, Profile, RecipeItem } from '@/lib/types.ts'
 
 type Preset = 'hoy' | 'semana' | 'mes'
+type RoleFilter = 'todos' | 'cajero' | 'portero'
+
+function sellerRoleLabel(role: AppRole) {
+  if (role === 'portero') return 'Boletería'
+  return roleLabels[role]
+}
 
 function parseKpis(data: unknown): Kpis {
   const row = data as Kpis
@@ -63,6 +76,8 @@ export function KpisPage() {
   const [preset, setPreset] = useState<Preset>('hoy')
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(today)
+  const [userId, setUserId] = useState('todos')
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('todos')
 
   function applyPreset(next: Preset) {
     setPreset(next)
@@ -79,10 +94,35 @@ export function KpisPage() {
     }
   }
 
-  const kpisQuery = useQuery({
-    queryKey: ['kpis', from, to],
+  const usersQuery = useQuery({
+    queryKey: ['profiles'],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_kpis', { p_from: from, p_to: to })
+      const { data, error } = await supabase.from('profiles').select('id, full_name, email, role, active, created_at').order('full_name')
+      if (error) throw new Error(error.message)
+      return (data ?? []) as Profile[]
+    },
+  })
+
+  const visibleUsers = useMemo(() => {
+    return (usersQuery.data ?? []).filter((person) => roleFilter === 'todos' || person.role === roleFilter)
+  }, [usersQuery.data, roleFilter])
+
+  function changeRole(next: RoleFilter) {
+    setRoleFilter(next)
+    if (next === 'todos' || userId === 'todos') return
+    const person = (usersQuery.data ?? []).find((item) => item.id === userId)
+    if (!person || person.role !== next) setUserId('todos')
+  }
+
+  const kpisQuery = useQuery({
+    queryKey: ['kpis', from, to, userId, roleFilter],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_kpis', {
+        p_from: from,
+        p_to: to,
+        p_user_id: userId === 'todos' ? null : userId,
+        p_role: roleFilter === 'todos' ? null : roleFilter,
+      })
       if (error) throw new Error(error.message)
       return parseKpis(data)
     },
@@ -147,6 +187,35 @@ export function KpisPage() {
         <div className="grid gap-1">
           <Label htmlFor="to">Hasta</Label>
           <Input id="to" type="date" value={to} onChange={(event) => { setPreset('hoy'); setTo(event.target.value) }} />
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor="role">Puesto</Label>
+          <Select value={roleFilter} onValueChange={(value) => changeRole(value as RoleFilter)}>
+            <SelectTrigger id="role" className="h-10 min-w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="cajero">Cajero</SelectItem>
+              <SelectItem value="portero">Boletería</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor="user">Usuario</Label>
+          <Select value={userId} onValueChange={setUserId}>
+            <SelectTrigger id="user" className="h-10 min-w-52">
+              <SelectValue placeholder="Todos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              {visibleUsers.map((person) => (
+                <SelectItem key={person.id} value={person.id}>
+                  {person.full_name} · {sellerRoleLabel(person.role)}{person.active ? '' : ' (inactivo)'}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
       {kpisQuery.isError ? <p className="mb-4 text-sm text-destructive">{errorMessage(kpisQuery.error)}</p> : null}

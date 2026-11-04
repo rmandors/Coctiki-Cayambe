@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Ban } from 'lucide-react'
 import { toast } from 'sonner'
@@ -16,11 +16,25 @@ import {
 } from '@/components/ui/dialog.tsx'
 import { Input } from '@/components/ui/input.tsx'
 import { Label } from '@/components/ui/label.tsx'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select.tsx'
 import { Textarea } from '@/components/ui/textarea.tsx'
 import { asNumber, dayBounds, errorMessage, formatDateTime, formatMoney, todayISO } from '@/lib/format.ts'
-import { paymentLabels, saleStatusLabels } from '@/lib/labels.ts'
+import { paymentLabels, roleLabels, saleStatusLabels } from '@/lib/labels.ts'
 import { supabase } from '@/lib/supabase.ts'
-import type { Sale, SaleStatus } from '@/lib/types.ts'
+import type { AppRole, Profile, Sale, SaleStatus } from '@/lib/types.ts'
+
+type RoleFilter = 'todos' | AppRole
+
+function sellerRoleLabel(role: AppRole) {
+  if (role === 'portero') return 'Boletería'
+  return roleLabels[role]
+}
 
 function one<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null
@@ -52,10 +66,35 @@ export function SalesPage() {
   const [status, setStatus] = useState<'todas' | SaleStatus>('todas')
   const [voiding, setVoiding] = useState<Sale | null>(null)
   const [reason, setReason] = useState('')
+  const [userId, setUserId] = useState('todos')
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('todos')
+
+  const isAdmin = profile?.role === 'admin'
+
+  const usersQuery = useQuery({
+    queryKey: ['profiles'],
+    enabled: isAdmin,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('profiles').select('id, full_name, email, role, active, created_at').order('full_name')
+      if (error) throw new Error(error.message)
+      return (data ?? []) as Profile[]
+    },
+  })
+
+  const visibleUsers = useMemo(() => {
+    return (usersQuery.data ?? []).filter((person) => roleFilter === 'todos' || person.role === roleFilter)
+  }, [usersQuery.data, roleFilter])
+
+  function changeRole(next: RoleFilter) {
+    setRoleFilter(next)
+    if (next === 'todos' || userId === 'todos') return
+    const person = (usersQuery.data ?? []).find((item) => item.id === userId)
+    if (!person || person.role !== next) setUserId('todos')
+  }
 
   const salesQuery = useQuery({
-    queryKey: ['sales', date, status, profile?.id],
-    enabled: Boolean(profile),
+    queryKey: ['sales', date, status, profile?.id, profile?.role, isAdmin ? userId : 'propias', isAdmin ? roleFilter : 'propias'],
+    enabled: Boolean(profile) && (!isAdmin || roleFilter === 'todos' || usersQuery.isSuccess),
     queryFn: async () => {
       const { start, end } = dayBounds(date)
       let request = supabase
@@ -68,6 +107,16 @@ export function SalesPage() {
         .gte('created_at', start)
         .lt('created_at', end)
         .order('created_at', { ascending: false })
+      if (!isAdmin && profile) {
+        request = request.eq('user_id', profile.id)
+      } else if (isAdmin) {
+        if (userId !== 'todos') request = request.eq('user_id', userId)
+        if (roleFilter !== 'todos') {
+          const ids = (usersQuery.data ?? []).filter((person) => person.role === roleFilter).map((person) => person.id)
+          if (ids.length === 0) return []
+          request = request.in('user_id', ids)
+        }
+      }
       if (status !== 'todas') request = request.eq('status', status)
       const { data, error } = await request
       if (error) throw new Error(error.message)
@@ -102,13 +151,47 @@ export function SalesPage() {
     <div>
       <PageHeader
         title="Ventas"
-        description={profile?.role === 'admin' ? 'Todas las ventas del día elegido.' : 'Tus ventas del día elegido.'}
+        description={isAdmin ? 'Todas las ventas del día elegido.' : 'Tus ventas del día elegido.'}
       />
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div className="grid gap-1.5">
           <Label htmlFor="sale-date">Día</Label>
           <Input id="sale-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
         </div>
+        {isAdmin ? (
+          <>
+            <div className="grid gap-1.5">
+              <Label htmlFor="sale-role">Puesto</Label>
+              <Select value={roleFilter} onValueChange={(value) => changeRole(value as RoleFilter)}>
+                <SelectTrigger id="sale-role" className="h-11 min-w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value="cajero">Cajero</SelectItem>
+                  <SelectItem value="portero">Boletería</SelectItem>
+                  <SelectItem value="admin">Administrador</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="sale-user">Usuario</Label>
+              <Select value={userId} onValueChange={setUserId}>
+                <SelectTrigger id="sale-user" className="h-11 min-w-52">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  {visibleUsers.map((person) => (
+                    <SelectItem key={person.id} value={person.id}>
+                      {person.full_name} · {sellerRoleLabel(person.role)}{person.active ? '' : ' (inactivo)'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        ) : null}
         <div className="flex gap-2">
           {(['todas', 'completada', 'anulada'] as const).map((value) => (
             <Button
@@ -127,6 +210,7 @@ export function SalesPage() {
       </div>
       {salesQuery.isLoading ? <p className="text-sm text-muted-foreground">Cargando ventas…</p> : null}
       {salesQuery.isError ? <p className="text-sm text-destructive">{errorMessage(salesQuery.error)}</p> : null}
+      {usersQuery.isError ? <p className="text-sm text-destructive">{errorMessage(usersQuery.error)}</p> : null}
       {!salesQuery.isLoading && sales.length === 0 ? (
         <EmptyState title="Sin ventas" detail="No hay ventas para ese filtro." />
       ) : null}
@@ -138,7 +222,7 @@ export function SalesPage() {
                 <p className="font-heading text-xl">#{String(sale.sale_number).padStart(4, '0')}</p>
                 <p className="text-sm text-muted-foreground">
                   {formatDateTime(sale.created_at)}
-                  {profile?.role === 'admin' && sale.cashier ? ` · ${sale.cashier.full_name}` : ''}
+                  {isAdmin && sale.cashier ? ` · ${sale.cashier.full_name}` : ''}
                   {' · '}
                   {paymentLabels[sale.payment_method]}
                 </p>
@@ -163,7 +247,7 @@ export function SalesPage() {
             ) : null}
             {sale.note ? <p className="mt-2 text-sm">Nota: {sale.note}</p> : null}
             {sale.void_reason ? <p className="mt-2 text-sm">Motivo: {sale.void_reason}</p> : null}
-            {profile?.role === 'admin' && sale.status === 'completada' ? (
+            {isAdmin && sale.status === 'completada' ? (
               <Button variant="destructive" className="mt-3 h-10" onClick={() => { setVoiding(sale); setReason('') }}>
                 <Ban /> Anular
               </Button>
