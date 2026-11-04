@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import {
   BookOpen,
   ChartColumn,
@@ -8,6 +8,7 @@ import {
   Menu,
   Package,
   ReceiptText,
+  Settings,
   Users,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -15,19 +16,70 @@ import { useAuth } from '@/auth/AuthProvider.tsx'
 import { BrandMark } from '@/components/brand.tsx'
 import { Badge } from '@/components/ui/badge.tsx'
 import { Button } from '@/components/ui/button.tsx'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu.tsx'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet.tsx'
 import { roleLabels } from '@/lib/labels.ts'
+import { viewRoleLabels, viewRoles } from '@/lib/owner.ts'
 import type { AppRole } from '@/lib/types.ts'
 import { cn } from '@/lib/utils.ts'
 
 const links: { to: string; label: string; icon: LucideIcon; roles: AppRole[] }[] = [
   { to: '/facturacion', label: 'Facturación', icon: GlassWater, roles: ['cajero', 'portero', 'admin'] },
-  { to: '/ventas', label: 'Ventas', icon: ReceiptText, roles: ['admin'] },
+  { to: '/ventas', label: 'Ventas', icon: ReceiptText, roles: ['cajero', 'portero', 'admin'] },
   { to: '/inventario', label: 'Inventario', icon: Package, roles: ['admin'] },
   { to: '/indicadores', label: 'Indicadores', icon: ChartColumn, roles: ['admin'] },
   { to: '/admin/catalogo', label: 'Catálogo', icon: BookOpen, roles: ['admin'] },
   { to: '/admin/usuarios', label: 'Usuarios', icon: Users, roles: ['admin'] },
 ]
+
+function ViewMenu({
+  role,
+  variant,
+  onChange,
+}: {
+  role: AppRole
+  variant: 'text' | 'badge'
+  onChange: (role: AppRole) => void
+}) {
+  const label = viewRoleLabels[role]
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className={cn(
+          'cursor-pointer border-0 bg-transparent p-0 outline-none',
+          variant === 'text'
+            ? 'inline-flex items-center gap-1 text-xs text-muted-foreground'
+            : 'sm:hidden',
+        )}
+        aria-label="Cambiar vista"
+      >
+        {variant === 'text' ? (
+          <>
+            <Settings className="size-3.5" aria-hidden="true" />
+            {label}
+          </>
+        ) : (
+          <Badge variant="secondary">
+            <Settings className="size-3.5" aria-hidden="true" />
+            {label}
+          </Badge>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {viewRoles.filter((item) => item !== role).map((item) => (
+          <DropdownMenuItem key={item} onSelect={() => onChange(item)}>
+            {viewRoleLabels[item]}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 function NavItems({ items, onNavigate }: { items: typeof links; onNavigate?: () => void }) {
   return (
@@ -54,10 +106,17 @@ function NavItems({ items, onNavigate }: { items: typeof links; onNavigate?: () 
 }
 
 export function AppShell() {
-  const { profile, signOut } = useAuth()
+  const { profile, canSwitchView, setViewRole, signOut } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [open, setOpen] = useState(false)
   const visible = links.filter((item) => profile && item.roles.includes(profile.role))
+
+  function changeView(role: AppRole) {
+    setViewRole(role)
+    const current = links.find((item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`))
+    if (current && !current.roles.includes(role)) navigate('/facturacion')
+  }
 
   return (
     <div className="min-h-svh">
@@ -75,11 +134,19 @@ export function AppShell() {
           <div className="ml-auto flex items-center gap-2">
             <div className="hidden text-right sm:block">
               <p className="text-sm font-medium leading-tight">{profile?.full_name}</p>
-              <p className="text-xs text-muted-foreground">{profile ? roleLabels[profile.role] : ''}</p>
+              {canSwitchView && profile ? (
+                <ViewMenu role={profile.role} variant="text" onChange={changeView} />
+              ) : (
+                <p className="text-xs text-muted-foreground">{profile ? roleLabels[profile.role] : ''}</p>
+              )}
             </div>
-            <Badge variant="secondary" className="sm:hidden">
-              {profile ? roleLabels[profile.role] : ''}
-            </Badge>
+            {canSwitchView && profile ? (
+              <ViewMenu role={profile.role} variant="badge" onChange={changeView} />
+            ) : (
+              <Badge variant="secondary" className="sm:hidden">
+                {profile ? roleLabels[profile.role] : ''}
+              </Badge>
+            )}
             <Button
               variant="outline"
               size="icon"

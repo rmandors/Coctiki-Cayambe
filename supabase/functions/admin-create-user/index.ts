@@ -11,6 +11,7 @@ type CreateUserBody = {
 };
 
 const roles = ["admin", "cajero", "portero"];
+const protectedEmail = "raymond-admin@coctiki.com";
 
 function translateAuthError(message: string) {
   if (/already.*(registered|exists)/i.test(message)) {
@@ -61,6 +62,16 @@ export default {
       }
       if (target === userId) {
         return Response.json({ error: "No puedes eliminar tu propia cuenta" }, { status: 400 });
+      }
+      const { data: targetProfile } = await ctx.supabaseAdmin
+        .from("profiles")
+        .select("email")
+        .eq("id", target)
+        .maybeSingle();
+      const { data: authUser } = await ctx.supabaseAdmin.auth.admin.getUserById(target);
+      const targetEmail = (targetProfile?.email ?? authUser.user?.email ?? "").trim().toLowerCase();
+      if (targetEmail === protectedEmail) {
+        return Response.json({ error: "Esta cuenta no se puede eliminar" }, { status: 400 });
       }
       const { error: deleteError } = await ctx.supabaseAdmin.auth.admin.deleteUser(target);
       if (deleteError) {

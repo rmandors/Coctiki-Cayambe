@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select.tsx'
 import { errorMessage, functionErrorMessage } from '@/lib/format.ts'
 import { roleLabels } from '@/lib/labels.ts'
+import { isProtectedAccount } from '@/lib/owner.ts'
 import { supabase } from '@/lib/supabase.ts'
 import type { AppRole, Profile } from '@/lib/types.ts'
 
@@ -118,6 +119,7 @@ export function UsersPage() {
             key={`${person.id}:${person.full_name}:${person.role}`}
             person={person}
             isSelf={person.id === profile?.id}
+            locked={isProtectedAccount(person.email)}
             pending={updateUser.isPending || deleteUser.isPending}
             onRename={(fullName) => updateUser.mutate({ id: person.id, full_name: fullName })}
             onRole={(next) => updateUser.mutate({ id: person.id, role: next })}
@@ -200,6 +202,7 @@ function RoleSelect({ value, onChange, disabled }: { value: AppRole; onChange: (
 function UserRow({
   person,
   isSelf,
+  locked,
   pending,
   onRename,
   onRole,
@@ -207,6 +210,7 @@ function UserRow({
 }: {
   person: Profile
   isSelf: boolean
+  locked: boolean
   pending: boolean
   onRename: (fullName: string) => void
   onRole: (role: AppRole) => void
@@ -223,23 +227,26 @@ function UserRow({
           <Input
             aria-label={`Nombre de ${person.full_name}`}
             value={name}
+            disabled={locked}
             onChange={(event) => setName(event.target.value)}
             className="max-w-xs"
           />
           <Button
             variant="outline"
             className="h-11"
-            disabled={!dirty || trimmed.length < 2 || pending}
+            disabled={locked || !dirty || trimmed.length < 2 || pending}
             onClick={() => onRename(trimmed)}
           >
             Renombrar
           </Button>
         </div>
-        <p className="text-sm text-muted-foreground">{person.email}{isSelf ? ' · Tú' : ''}</p>
+        <p className="text-sm text-muted-foreground">
+          {person.email}{isSelf ? ' · Tú' : ''}{locked ? ' · Protegida' : ''}
+        </p>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <RoleSelect value={person.role} disabled={isSelf || pending} onChange={onRole} />
-        <Button variant="destructive" className="h-11" disabled={isSelf || pending} onClick={onDelete}>
+        <RoleSelect value={person.role} disabled={locked || isSelf || pending} onChange={onRole} />
+        <Button variant="destructive" className="h-11" disabled={locked || isSelf || pending} onClick={onDelete}>
           <Trash2 /> Eliminar
         </Button>
       </div>
