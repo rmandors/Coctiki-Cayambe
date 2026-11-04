@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { EmptyState, PageHeader } from '@/components/feedback.tsx'
 import { Button } from '@/components/ui/button.tsx'
@@ -14,26 +14,13 @@ import {
 } from '@/components/ui/dialog.tsx'
 import { Input } from '@/components/ui/input.tsx'
 import { Label } from '@/components/ui/label.tsx'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select.tsx'
 import { Switch } from '@/components/ui/switch.tsx'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx'
-import { asNumber, errorMessage, formatMoney, formatPercent, formatQty } from '@/lib/format.ts'
-import { unitOptions } from '@/lib/labels.ts'
+import { asNumber, errorMessage, formatMoney } from '@/lib/format.ts'
 import { supabase } from '@/lib/supabase.ts'
-import type { InventoryItem, InventoryUnit, Product, ProductVariant, RecipeItem } from '@/lib/types.ts'
+import type { Product, ProductVariant } from '@/lib/types.ts'
+import { isJarra, linkFinishedProduct, linkFlavor, syncProductStock } from '@/features/catalog/stockLink.ts'
 
-type DraftLine = {
-  key: string
-  inventoryItemId: string
-  mode: 'cantidad' | 'rinde'
-  amount: string
-}
+const pageSize = 8
 
 function numberOrNull(value: string) {
   if (value.trim() === '') return null
@@ -41,40 +28,23 @@ function numberOrNull(value: string) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function suggestedLowStock(unit: InventoryUnit) {
-  if (unit === 'galon' || unit === 'kg') return '0.5'
-  if (unit === 'litro') return '1'
-  if (unit === 'ml') return '200'
-  if (unit === 'g') return '100'
-  return '3'
-}
-
-function toDraft(recipe: RecipeItem): DraftLine {
-  const yieldCount = 1 / recipe.quantity
-  const wholeYield = Math.abs(yieldCount - Math.round(yieldCount)) < 0.001 && yieldCount >= 2
-  return {
-    key: recipe.id,
-    inventoryItemId: recipe.inventory_item_id,
-    mode: wholeYield ? 'rinde' : 'cantidad',
-    amount: wholeYield ? String(Math.round(yieldCount)) : String(recipe.quantity),
-  }
+function Pager({ page, pageCount, onPage }: { page: number; pageCount: number; onPage: (page: number) => void }) {
+  if (pageCount <= 1) return null
+  return (
+    <div className="mt-3 flex items-center justify-center gap-3">
+      <Button type="button" variant="outline" className="size-10" disabled={page === 0} onClick={() => onPage(page - 1)} aria-label="Página anterior">
+        <ChevronLeft />
+      </Button>
+      <span className="min-w-16 text-center text-sm text-muted-foreground">{page + 1} de {pageCount}</span>
+      <Button type="button" variant="outline" className="size-10" disabled={page >= pageCount - 1} onClick={() => onPage(page + 1)} aria-label="Página siguiente">
+        <ChevronRight />
+      </Button>
+    </div>
+  )
 }
 
 export function CatalogPage() {
   const queryClient = useQueryClient()
-  const itemsQuery = useQuery({
-    queryKey: ['inventory'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('inventory_items').select('*').order('name')
-      if (error) throw new Error(error.message)
-      return ((data ?? []) as InventoryItem[]).map((item) => ({
-        ...item,
-        stock: asNumber(item.stock),
-        min_stock: asNumber(item.min_stock),
-        unit_cost: asNumber(item.unit_cost),
-      }))
-    },
-  })
   const productsQuery = useQuery({
     queryKey: ['products', 'all'],
     queryFn: async () => {
@@ -95,15 +65,6 @@ export function CatalogPage() {
       }))
     },
   })
-  const recipesQuery = useQuery({
-    queryKey: ['recipes'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('recipe_items').select('*')
-      if (error) throw new Error(error.message)
-      return ((data ?? []) as RecipeItem[]).map((recipe) => ({ ...recipe, quantity: asNumber(recipe.quantity) }))
-    },
-  })
-
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['inventory'] })
     void queryClient.invalidateQueries({ queryKey: ['products'] })
@@ -116,243 +77,37 @@ export function CatalogPage() {
     <div>
       <PageHeader
         title="Catálogo"
-        description="Insumos, productos y la conversión de cada receta. 1 galón rinde 6 jarras, así que cada jarra descuenta 0.1667 galón."
+        description="Lo que se vende. El stock se cuenta en Inventario. Una jarra descuenta un sexto del galón de su sabor."
       />
-      <Tabs defaultValue="productos">
-        <TabsList className="h-11">
-          <TabsTrigger value="productos" className="h-9 px-4">Productos</TabsTrigger>
-          <TabsTrigger value="insumos" className="h-9 px-4">Insumos</TabsTrigger>
-        </TabsList>
-        <TabsContent value="productos" className="mt-4">
-          <ProductsPanel
-            products={productsQuery.data ?? []}
-            items={itemsQuery.data ?? []}
-            recipes={recipesQuery.data ?? []}
-            onSaved={refresh}
-          />
-        </TabsContent>
-        <TabsContent value="insumos" className="mt-4">
-          <ItemsPanel items={itemsQuery.data ?? []} onSaved={refresh} />
-        </TabsContent>
-      </Tabs>
+      <div className="mt-4">
+        <ProductsPanel products={productsQuery.data ?? []} onSaved={refresh} />
+      </div>
       {productsQuery.isError ? <p className="mt-3 text-sm text-destructive">{errorMessage(productsQuery.error)}</p> : null}
     </div>
   )
 }
 
-function ItemsPanel({ items, onSaved }: { items: InventoryItem[]; onSaved: () => void }) {
-  const [editing, setEditing] = useState<InventoryItem | null>(null)
-  const [creating, setCreating] = useState(false)
-
-  const save = useMutation({
-    mutationFn: async (input: {
-      id?: string
-      name: string
-      unit: InventoryUnit
-      minStock: number
-      unitCost: number
-      initial: number
-      active: boolean
-    }) => {
-      if (input.id) {
-        const { error } = await supabase.from('inventory_items').update({
-          name: input.name,
-          min_stock: input.minStock,
-          unit_cost: input.unitCost,
-          active: input.active,
-        }).eq('id', input.id)
-        if (error) throw new Error(error.message)
-        return
-      }
-      const { data, error } = await supabase.from('inventory_items').insert({
-        name: input.name,
-        unit: input.unit,
-        stock: 0,
-        min_stock: input.minStock,
-        unit_cost: input.unitCost,
-        active: true,
-      }).select('id').single()
-      if (error) throw new Error(error.message)
-      if (input.initial > 0) {
-        const adjustment = await supabase.rpc('adjust_inventory', {
-          p_item_id: data.id,
-          p_reason: 'compra',
-          p_delta: input.initial,
-          p_unit_cost: input.unitCost,
-          p_note: 'Stock inicial',
-        })
-        if (adjustment.error) throw new Error(adjustment.error.message)
-      }
-    },
-    onSuccess: () => {
-      toast.success('Insumo guardado')
-      setEditing(null)
-      setCreating(false)
-      onSaved()
-    },
-    onError: (error) => toast.error(errorMessage(error)),
-  })
-
-  return (
-    <div>
-      <div className="mb-3 flex justify-end">
-        <Button className="h-11" onClick={() => setCreating(true)}><Plus /> Nuevo insumo</Button>
-      </div>
-      <div className="grid gap-2">
-        {items.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setEditing(item)}
-            className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 text-left"
-          >
-            <span>
-              <span className="block font-medium">{item.name}</span>
-              <span className="text-xs text-muted-foreground">
-                {formatQty(item.stock)} {unitOptions.find((option) => option.value === item.unit)?.label} · {formatMoney(item.unit_cost)}
-              </span>
-            </span>
-            <span className="text-sm text-muted-foreground">{item.active ? 'Activo' : 'Inactivo'}</span>
-          </button>
-        ))}
-      </div>
-      <ItemDialog
-        key={editing?.id ?? (creating ? 'new' : 'idle')}
-        open={creating || editing !== null}
-        item={editing}
-        pending={save.isPending}
-        onClose={() => { setCreating(false); setEditing(null) }}
-        onSave={(input) => save.mutate(input)}
-      />
-    </div>
-  )
-}
-
-function ItemDialog({
-  open,
-  item,
-  pending,
-  onClose,
-  onSave,
-}: {
-  open: boolean
-  item: InventoryItem | null
-  pending: boolean
-  onClose: () => void
-  onSave: (input: {
-    id?: string
-    name: string
-    unit: InventoryUnit
-    minStock: number
-    unitCost: number
-    initial: number
-    active: boolean
-  }) => void
-}) {
-  const [name, setName] = useState(item?.name ?? '')
-  const [unit, setUnit] = useState<InventoryUnit>(item?.unit ?? 'unidad')
-  const [minStock, setMinStock] = useState(item ? String(item.min_stock) : suggestedLowStock('unidad'))
-  const [unitCost, setUnitCost] = useState(String(item?.unit_cost ?? 0))
-  const [initial, setInitial] = useState('0')
-  const [active, setActive] = useState(item?.active ?? true)
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose() }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{item ? 'Editar insumo' : 'Nuevo insumo'}</DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor="item-name">Nombre</Label>
-            <Input id="item-name" value={name} onChange={(event) => setName(event.target.value)} />
-          </div>
-          <div className="grid gap-1.5">
-            <Label>Unidad</Label>
-            <Select
-              value={unit}
-              disabled={Boolean(item)}
-              onValueChange={(value) => {
-                const next = value as InventoryUnit
-                if (!item) {
-                  setMinStock((current) => current === suggestedLowStock(unit) ? suggestedLowStock(next) : current)
-                }
-                setUnit(next)
-              }}
-            >
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {unitOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="item-min">Stock bajo desde</Label>
-              <Input id="item-min" inputMode="decimal" value={minStock} onChange={(event) => setMinStock(event.target.value)} />
-              <p className="text-xs text-muted-foreground">Avisa en inventario al llegar a esta cantidad o menos.</p>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="item-cost">Costo por unidad</Label>
-              <Input id="item-cost" inputMode="decimal" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} />
-            </div>
-          </div>
-          {item ? null : (
-            <div className="grid gap-1.5">
-              <Label htmlFor="item-initial">Stock inicial</Label>
-              <Input id="item-initial" inputMode="decimal" value={initial} onChange={(event) => setInitial(event.target.value)} />
-            </div>
-          )}
-          {item ? (
-            <label className="flex items-center justify-between text-sm">
-              Activo
-              <Switch checked={active} onCheckedChange={setActive} />
-            </label>
-          ) : null}
-        </div>
-        <DialogFooter>
-          <Button
-            disabled={pending || name.trim() === ''}
-            onClick={() => {
-              const min = numberOrNull(minStock)
-              const cost = numberOrNull(unitCost)
-              const opening = numberOrNull(initial)
-              if (min === null || min < 0 || cost === null || cost < 0 || opening === null || opening < 0) {
-                toast.error('Revisa mínimo, costo y stock')
-                return
-              }
-              onSave({
-                id: item?.id,
-                name: name.trim(),
-                unit,
-                minStock: min,
-                unitCost: cost,
-                initial: opening,
-                active,
-              })
-            }}
-          >
-            Guardar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 function ProductsPanel({
   products,
-  items,
-  recipes,
   onSaved,
 }: {
   products: Product[]
-  items: InventoryItem[]
-  recipes: RecipeItem[]
   onSaved: () => void
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(products[0]?.id ?? null)
   const [creating, setCreating] = useState(false)
+  const signature = products.map((product) => product.id).join('\0')
+  const [page, setPage] = useState(0)
+  const [seen, setSeen] = useState(`${selectedId ?? ''}\0${signature}`)
+  const mark = `${selectedId ?? ''}\0${signature}`
+  if (seen !== mark) {
+    setSeen(mark)
+    const index = products.findIndex((product) => product.id === selectedId)
+    if (index >= 0) setPage(Math.floor(index / pageSize))
+  }
+  const pageCount = Math.max(1, Math.ceil(products.length / pageSize))
+  const current = Math.min(page, pageCount - 1)
+  const visible = products.slice(current * pageSize, current * pageSize + pageSize)
   const selected = products.find((product) => product.id === selectedId) ?? null
 
   const create = useMutation({
@@ -365,7 +120,9 @@ function ProductsPanel({
         requires_variant: input.requiresVariant,
       }).select('id').single()
       if (error) throw new Error(error.message)
-      return data.id as string
+      const id = data.id as string
+      if (!input.requiresVariant) await linkFinishedProduct(id, input.name)
+      return id
     },
     onSuccess: (id) => {
       setCreating(false)
@@ -380,7 +137,7 @@ function ProductsPanel({
       <div>
         <Button className="mb-3 h-11 w-full" onClick={() => setCreating(true)}><Plus /> Nuevo producto</Button>
         <div className="grid gap-2">
-          {products.map((product) => (
+          {visible.map((product) => (
             <button
               key={product.id}
               type="button"
@@ -394,13 +151,12 @@ function ProductsPanel({
             </button>
           ))}
         </div>
+        <Pager page={current} pageCount={pageCount} onPage={setPage} />
       </div>
       {selected ? (
         <ProductEditor
           key={selected.id}
           product={selected}
-          items={items}
-          recipes={recipes}
           onSaved={onSaved}
           onDeleted={() => {
             const rest = products.filter((item) => item.id !== selected.id)
@@ -542,11 +298,6 @@ function ProductCreateDialog({
           <div className="grid gap-1.5">
             <Label htmlFor="new-low">Stock bajo desde</Label>
             <Input id="new-low" inputMode="decimal" value={lowStockAt} onChange={(event) => setLowStockAt(event.target.value)} />
-            <p className="text-xs text-muted-foreground">
-              {requiresVariant
-                ? 'Cada sabor marca stock bajo al quedar en esta cantidad o menos.'
-                : 'Marca stock bajo al quedar en esta cantidad o menos.'}
-            </p>
           </div>
           <label className="flex items-center justify-between text-sm">
             Pide sabor al vender
@@ -576,14 +327,10 @@ function ProductCreateDialog({
 
 function ProductEditor({
   product,
-  items,
-  recipes,
   onSaved,
   onDeleted,
 }: {
   product: Product
-  items: InventoryItem[]
-  recipes: RecipeItem[]
   onSaved: () => void
   onDeleted: () => void
 }) {
@@ -594,26 +341,9 @@ function ProductEditor({
   const [requiresVariant, setRequiresVariant] = useState(product.requires_variant)
   const [doorOnly, setDoorOnly] = useState(product.door_only)
   const [active, setActive] = useState(product.active)
-  const [scope, setScope] = useState('base')
   const [variantName, setVariantName] = useState('')
   const [variantPrice, setVariantPrice] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const recipeKey = `${product.id}:${scope}`
-  const serverLines = useMemo(() => {
-    const variantId = scope === 'base' ? null : scope
-    return recipes
-      .filter((recipe) => recipe.product_id === product.id && (recipe.variant_id ?? null) === variantId)
-      .map(toDraft)
-  }, [product.id, recipes, scope])
-  const [draft, setDraft] = useState<{ key: string; lines: DraftLine[] } | null>(null)
-  const lines = draft?.key === recipeKey ? draft.lines : serverLines
-
-  function setLines(next: DraftLine[] | ((current: DraftLine[]) => DraftLine[])) {
-    setDraft((current) => {
-      const base = current?.key === recipeKey ? current.lines : serverLines
-      return { key: recipeKey, lines: typeof next === 'function' ? next(base) : next }
-    })
-  }
 
   const saveProduct = useMutation({
     mutationFn: async () => {
@@ -632,6 +362,14 @@ function ProductEditor({
         active,
       }).eq('id', product.id)
       if (error) throw new Error(error.message)
+      await syncProductStock({
+        productId: product.id,
+        name: name.trim(),
+        category: category.trim(),
+        doorOnly,
+        requiresVariant,
+        variants: product.product_variants,
+      })
     },
     onSuccess: () => {
       toast.success('Producto actualizado')
@@ -662,14 +400,18 @@ function ProductEditor({
           ...(input.active === undefined ? {} : { active: input.active }),
         }).eq('id', input.id)
         if (error) throw new Error(error.message)
+        if (input.active !== false) {
+          await linkFlavor(product.id, product.name, product.category, input.id, input.name)
+        }
         return
       }
-      const { error } = await supabase.from('product_variants').insert({
+      const { data, error } = await supabase.from('product_variants').insert({
         product_id: product.id,
         name: input.name,
         price: input.price,
-      })
+      }).select('id').single()
       if (error) throw new Error(error.message)
+      await linkFlavor(product.id, product.name, product.category, data.id as string, input.name)
     },
     onSuccess: () => {
       setVariantName('')
@@ -679,53 +421,9 @@ function ProductEditor({
     onError: (error) => toast.error(errorMessage(error)),
   })
 
-  const saveRecipe = useMutation({
-    mutationFn: async () => {
-      const payload = lines.flatMap((line) => {
-        if (!line.inventoryItemId && line.amount.trim() === '') return []
-        const amount = numberOrNull(line.amount)
-        if (!line.inventoryItemId || amount === null || amount <= 0) {
-          throw new Error('Cada línea de la receta necesita insumo y cantidad')
-        }
-        return [{
-          inventory_item_id: line.inventoryItemId,
-          quantity: line.mode === 'rinde' ? 1 / amount : amount,
-        }]
-      })
-      const { error } = await supabase.rpc('replace_recipe', {
-        p_product_id: product.id,
-        p_variant_id: scope === 'base' ? null : scope,
-        p_items: payload,
-      })
-      if (error) throw new Error(error.message)
-    },
-    onSuccess: () => {
-      setDraft(null)
-      toast.success('Receta guardada')
-      onSaved()
-    },
-    onError: (error) => toast.error(errorMessage(error)),
-  })
-
-  const preview = useMemo(() => {
-    return lines.reduce((sum, line) => {
-      const amount = numberOrNull(line.amount)
-      const item = items.find((candidate) => candidate.id === line.inventoryItemId)
-      if (!item || amount === null || amount <= 0) return sum
-      const quantity = line.mode === 'rinde' ? 1 / amount : amount
-      return sum + quantity * item.unit_cost
-    }, 0)
-  }, [lines, items])
-
-  const sellPrice = numberOrNull(price) ?? 0
-  const scopeVariant = product.product_variants.find((variant) => variant.id === scope)
-  const effectivePrice = scopeVariant?.price ?? sellPrice
-  const margin = effectivePrice === 0 ? 0 : ((effectivePrice - preview) / effectivePrice) * 100
-  const selectedItem = (line: DraftLine) => items.find((item) => item.id === line.inventoryItemId)
-
   return (
     <div className="flex flex-col gap-4 self-start rounded-3xl border border-border bg-card p-4">
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid items-end gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <div className="grid gap-1.5">
           <Label htmlFor="product-name">Nombre</Label>
           <Input id="product-name" value={name} onChange={(event) => setName(event.target.value)} />
@@ -741,9 +439,6 @@ function ProductEditor({
         <div className="grid gap-1.5">
           <Label htmlFor="product-low">Stock bajo desde</Label>
           <Input id="product-low" inputMode="decimal" value={lowStockAt} onChange={(event) => setLowStockAt(event.target.value)} />
-          <p className="text-xs text-muted-foreground">
-            {requiresVariant ? 'Cada sabor avisa al quedar en esta cantidad o menos.' : 'Avisa al quedar en esta cantidad o menos.'}
-          </p>
         </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
@@ -826,87 +521,9 @@ function ProductEditor({
 
       {doorOnly ? (
         <p className="text-sm text-muted-foreground">Este producto se cobra y no descuenta inventario.</p>
-      ) : (
-      <section className="grid gap-2">
-        <div className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_13rem]">
-          <div>
-            <h2 className="font-heading text-xl">Receta</h2>
-            <p className="text-sm text-muted-foreground">
-              Si un sabor tiene receta propia, se usa esa. Si no, se usa la receta base.
-            </p>
-          </div>
-          <Select value={scope} onValueChange={setScope}>
-            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="base">Receta base</SelectItem>
-              {product.product_variants.filter((variant) => variant.active).map((variant) => (
-                <SelectItem key={variant.id} value={variant.id}>{variant.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        {lines.map((line, index) => {
-          const item = selectedItem(line)
-          const amount = numberOrNull(line.amount)
-          const perSale = item && amount && amount > 0
-            ? line.mode === 'rinde' ? 1 / amount : amount
-            : null
-          return (
-            <div key={line.key} className="rounded-2xl bg-muted/50 p-3">
-              <div className="grid items-center gap-2 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_7rem_auto]">
-              <Select
-                value={line.inventoryItemId || undefined}
-                onValueChange={(value) => setLines((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, inventoryItemId: value } : entry))}
-              >
-                <SelectTrigger className="w-full"><SelectValue placeholder="Insumo" /></SelectTrigger>
-                <SelectContent>
-                  {items.filter((candidate) => candidate.active).map((candidate) => (
-                    <SelectItem key={candidate.id} value={candidate.id}>{candidate.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={line.mode}
-                onValueChange={(value) => setLines((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, mode: value as DraftLine['mode'] } : entry))}
-              >
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cantidad">Cantidad</SelectItem>
-                  <SelectItem value="rinde">1 unidad rinde</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                inputMode="decimal"
-                value={line.amount}
-                onChange={(event) => setLines((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, amount: event.target.value } : entry))}
-              />
-              <Button variant="ghost" className="h-11" onClick={() => setLines((current) => current.filter((_, entryIndex) => entryIndex !== index))}>Quitar</Button>
-              </div>
-              {perSale !== null && item ? (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Cada venta descuenta {formatQty(perSale)} {unitOptions.find((option) => option.value === item.unit)?.label.toLowerCase()}.
-                </p>
-              ) : null}
-            </div>
-          )
-        })}
-        <Button
-          variant="outline"
-          className="h-11 w-fit"
-          onClick={() => setLines((current) => [...current, { key: crypto.randomUUID(), inventoryItemId: '', mode: 'rinde', amount: '' }])}
-        >
-          Agregar insumo
-        </Button>
-        <p className="text-sm">
-          Costo de esta receta: <strong>{formatMoney(preview)}</strong>
-          {' · '}
-          margen {formatPercent(margin)}
-        </p>
-        <Button className="h-11 w-fit" disabled={saveRecipe.isPending} onClick={() => saveRecipe.mutate()}>
-          Guardar receta
-        </Button>
-      </section>
-      )}
+      ) : isJarra(category) ? (
+        <p className="text-sm text-muted-foreground">Cada sabor descuenta un sexto de su galón. El galón se cuenta en Inventario.</p>
+      ) : null}
     </div>
   )
 }

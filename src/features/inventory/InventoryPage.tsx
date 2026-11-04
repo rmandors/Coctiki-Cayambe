@@ -176,8 +176,10 @@ export function InventoryPage() {
     const name = movement.inventory_items?.name
     return name ? visibleNames.has(name) : false
   })
-  const out = items.filter((item) => item.active && item.stock <= 0)
-  const low = items.filter((item) => item.active && item.stock > 0 && item.stock <= item.min_stock)
+  const activeVisible = visible.filter((item) => item.active)
+  const available = activeVisible.filter((item) => item.stock > item.min_stock)
+  const low = activeVisible.filter((item) => item.stock > 0 && item.stock <= item.min_stock)
+  const out = activeVisible.filter((item) => item.stock <= 0)
 
   useEffect(() => {
     if (category !== 'Todas' && !categories.includes(category)) setCategory('Todas')
@@ -196,12 +198,11 @@ export function InventoryPage() {
         title="Inventario"
         description="El stock baja solo al registrar una venta. Aquí puedes contar o registrar una compra."
       />
-      {out.length > 0 || low.length > 0 ? (
-        <div className="mb-4 rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm">
-          {out.length > 0 ? <p>{out.length} agotado{out.length === 1 ? '' : 's'}.</p> : null}
-          {low.length > 0 ? <p>{low.length} en stock bajo.</p> : null}
-        </div>
-      ) : null}
+      <div className="mb-4 flex flex-wrap gap-2">
+        <StockCount count={available.length} label="Disponible" className="border-emerald-500/45 bg-emerald-500/15 text-emerald-100" />
+        <StockCount count={low.length} label="Stock Bajo" className="border-amber-400/55 bg-amber-400/15 text-amber-100" />
+        <StockCount count={out.length} label="Agotado" className="border-red-500/50 bg-red-500/15 text-red-100" />
+      </div>
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
         {categories.map((name) => (
           <Button
@@ -325,6 +326,15 @@ export function InventoryPage() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+function StockCount({ count, label, className }: { count: number; label: string; className: string }) {
+  return (
+    <p className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium ${className}`}>
+      <span className="font-heading text-lg leading-none">{count}</span>
+      {label}
+    </p>
   )
 }
 

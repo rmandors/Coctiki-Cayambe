@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { PageHeader } from '@/components/feedback.tsx'
 import { Button } from '@/components/ui/button.tsx'
@@ -19,6 +20,8 @@ import type { AppRole, InventoryItem, Kpis, PaymentMethod, Product, Profile, Rec
 
 type Preset = 'hoy' | 'semana' | 'mes'
 type RoleFilter = 'todos' | 'cajero' | 'portero'
+
+const pageSize = 8
 
 function sellerRoleLabel(role: AppRole) {
   if (role === 'portero') return 'Boletería'
@@ -55,6 +58,13 @@ function parseKpis(data: unknown): Kpis {
     })),
   }
 }
+
+const chartTooltipProps = {
+  labelStyle: {
+    color: 'oklch(0.22 0.03 55)',
+    fontWeight: 600,
+  },
+} as const
 
 function recipeCost(
   productId: string,
@@ -235,7 +245,7 @@ export function KpisPage() {
                 <CartesianGrid stroke="oklch(0.85 0.04 80 / 16%)" vertical={false} />
                 <XAxis dataKey="label" stroke="oklch(0.74 0.03 80)" fontSize={12} />
                 <YAxis stroke="oklch(0.74 0.03 80)" fontSize={12} />
-                <Tooltip formatter={(value) => formatMoney(asNumber(value))} />
+                <Tooltip formatter={(value) => formatMoney(asNumber(value))} {...chartTooltipProps} />
                 <Line type="monotone" dataKey="revenue" name="Venta" stroke="oklch(0.80 0.14 78)" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="cost" name="Costo" stroke="oklch(0.72 0.12 145)" strokeWidth={2} dot={false} />
               </LineChart>
@@ -250,7 +260,7 @@ export function KpisPage() {
                 <CartesianGrid stroke="oklch(0.85 0.04 80 / 16%)" vertical={false} />
                 <XAxis dataKey="label" stroke="oklch(0.74 0.03 80)" fontSize={12} />
                 <YAxis stroke="oklch(0.74 0.03 80)" fontSize={12} />
-                <Tooltip formatter={(value) => formatMoney(asNumber(value))} />
+                <Tooltip formatter={(value) => formatMoney(asNumber(value))} {...chartTooltipProps} />
                 <Bar dataKey="revenue" name="Venta" fill="oklch(0.80 0.14 78)" radius={6} />
               </BarChart>
             </ResponsiveContainer>
@@ -282,16 +292,7 @@ export function KpisPage() {
         </section>
       </div>
 
-      {lowStock.length > 0 ? (
-        <section className="mt-5 rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4">
-          <h2 className="mb-2 font-medium">Stock bajo</h2>
-          <ul className="grid gap-1 text-sm">
-            {lowStock.map((item) => (
-              <li key={item.id}>{item.name}: {item.stock} (mínimo {item.min_stock})</li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      {lowStock.length > 0 ? <LowStockList items={lowStock} /> : null}
     </div>
   )
 }
@@ -306,6 +307,34 @@ function KpiCard({ label, value, hint }: { label: string; value: string; hint?: 
   )
 }
 
+function usePage(ids: string[]) {
+  const signature = ids.join('\0')
+  const [page, setPage] = useState(0)
+  const [seen, setSeen] = useState(signature)
+  if (seen !== signature) {
+    setSeen(signature)
+    setPage(0)
+  }
+  const pageCount = Math.max(1, Math.ceil(ids.length / pageSize))
+  const current = seen === signature ? Math.min(page, pageCount - 1) : 0
+  return { current, pageCount, setPage }
+}
+
+function Pager({ page, pageCount, onPage }: { page: number; pageCount: number; onPage: (page: number) => void }) {
+  if (pageCount <= 1) return null
+  return (
+    <div className="mt-3 flex items-center justify-center gap-3">
+      <Button type="button" variant="outline" className="size-10" disabled={page === 0} onClick={() => onPage(page - 1)} aria-label="Página anterior">
+        <ChevronLeft />
+      </Button>
+      <span className="min-w-16 text-center text-sm text-muted-foreground">{page + 1} de {pageCount}</span>
+      <Button type="button" variant="outline" className="size-10" disabled={page >= pageCount - 1} onClick={() => onPage(page + 1)} aria-label="Página siguiente">
+        <ChevronRight />
+      </Button>
+    </div>
+  )
+}
+
 function MarginTable({
   rows,
   empty,
@@ -313,33 +342,62 @@ function MarginTable({
   rows: { id: string; label: string; price: number; cost: number; priceLabel: string }[]
   empty: string
 }) {
+  const { current, pageCount, setPage } = usePage(rows.map((row) => row.id))
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">{empty}</p>
+  const visible = rows.slice(current * pageSize, current * pageSize + pageSize)
+  const moneyWidth = `${Math.max(rows[0].priceLabel.length, 'Costo'.length, ...rows.flatMap((row) => [formatMoney(row.price).length, formatMoney(row.cost).length])) + 1.5}ch`
+  const marginWidth = `${Math.max('Margen'.length, ...rows.map((row) => formatPercent(row.price === 0 ? 0 : ((row.price - row.cost) / row.price) * 100).length)) + 1.5}ch`
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="text-left text-muted-foreground">
-          <tr>
-            <th className="py-1 font-medium">Producto</th>
-            <th className="py-1 font-medium">{rows[0]?.priceLabel}</th>
-            <th className="py-1 font-medium">Costo</th>
-            <th className="py-1 font-medium">Margen</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const profit = row.price - row.cost
-            const margin = row.price === 0 ? 0 : (profit / row.price) * 100
-            return (
-              <tr key={row.id} className="border-t border-border">
-                <td className="py-2 pr-2">{row.label}</td>
-                <td className="py-2">{formatMoney(row.price)}</td>
-                <td className="py-2">{formatMoney(row.cost)}</td>
-                <td className="py-2">{formatPercent(margin)}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col />
+            <col style={{ width: moneyWidth }} />
+            <col style={{ width: moneyWidth }} />
+            <col style={{ width: marginWidth }} />
+          </colgroup>
+          <thead className="text-left text-muted-foreground">
+            <tr>
+              <th className="py-1 pr-2 font-medium">Producto</th>
+              <th className="py-1 text-right font-medium">{rows[0]?.priceLabel}</th>
+              <th className="py-1 text-right font-medium">Costo</th>
+              <th className="py-1 text-right font-medium">Margen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((row) => {
+              const profit = row.price - row.cost
+              const margin = row.price === 0 ? 0 : (profit / row.price) * 100
+              return (
+                <tr key={row.id} className="border-t border-border">
+                  <td className="py-2 pr-2 break-words">{row.label}</td>
+                  <td className="py-2 text-right whitespace-nowrap tabular-nums">{formatMoney(row.price)}</td>
+                  <td className="py-2 text-right whitespace-nowrap tabular-nums">{formatMoney(row.cost)}</td>
+                  <td className="py-2 text-right whitespace-nowrap tabular-nums">{formatPercent(margin)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <Pager page={current} pageCount={pageCount} onPage={setPage} />
     </div>
+  )
+}
+
+function LowStockList({ items }: { items: InventoryItem[] }) {
+  const { current, pageCount, setPage } = usePage(items.map((item) => item.id))
+  const visible = items.slice(current * pageSize, current * pageSize + pageSize)
+  return (
+    <section className="mt-5 rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4">
+      <h2 className="mb-2 font-medium">Stock bajo</h2>
+      <ul className="grid gap-1 text-sm">
+        {visible.map((item) => (
+          <li key={item.id}>{item.name}: {item.stock} (mínimo {item.min_stock})</li>
+        ))}
+      </ul>
+      <Pager page={current} pageCount={pageCount} onPage={setPage} />
+    </section>
   )
 }
