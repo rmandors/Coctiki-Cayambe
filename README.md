@@ -10,19 +10,19 @@ Las cuentas las crea un administrador. No hay registro público.
 
 | Rol | Qué ve |
 | --- | --- |
-| Cajero | Facturación del menú. No ve entrada, barra libre ni el historial. |
-| Portero | Facturación, solo entrada y barra libre. |
-| Administrador | Todo: menú completo, ventas, inventario, indicadores, catálogo y usuarios. |
+| Cajero | Facturación del menú y sus propias ventas. No ve entrada, barra libre, las ventas de otros ni puede anular. |
+| Portero | Facturación, solo entrada y barra libre, y sus propias ventas. No ve las de otros ni puede anular. |
+| Administrador | Todo: menú completo, todas las ventas (puede anularlas), inventario, indicadores, catálogo y usuarios. |
 
 El rol vive en la base de datos, no en datos que el usuario pueda editar. Un cajero o un portero no pueden vender un producto que no está en su menú: la pantalla lo oculta y la base lo rechaza.
 
 ## Secciones
 
-**Facturación.** Grilla del menú. Si el producto pide sabor, se elige antes de agregarlo. La cuenta lleva cantidad, descuento (monto o porcentaje), pago en efectivo, transferencia o tarjeta, y una nota opcional. Al registrar, se imprime un comprobante interno. Si el stock queda en cero o negativo, la venta igual se guarda y el comprobante avisa.
+**Facturación.** Grilla del menú. Si el producto pide sabor, se elige antes de agregarlo. La cuenta lleva cantidad, descuento (monto o porcentaje), pago en efectivo, transferencia o tarjeta, y una nota opcional. Al registrar, se imprime un comprobante interno. Cada sabor, o el producto si no tiene sabor, muestra Agotado o Stock bajo. Si la cantidad supera el stock, la venta no se registra.
 
-**Ventas.** Historial del día. El administrador puede anular una venta; al anularla, el inventario vuelve.
+**Ventas.** Historial del día. Cajero y portero ven solo las suyas, sin anular. El administrador ve todas, puede filtrar por usuario o por puesto, y puede anular una venta; al anularla, el inventario vuelve.
 
-**Inventario.** Stock por insumo, con aviso si está bajo o negativo. Un ajuste deja el stock en un número. Una compra suma cantidad y, si ya había stock, promedia el costo. Abajo queda el movimiento de cada cambio.
+**Inventario.** Stock por insumo, agrupado por la categoría de su receta. Agotado queda en cero y Stock bajo al llegar al umbral. El stock no puede quedar negativo. Un ajuste deja el stock en un número. Una compra suma cantidad y, si ya había stock, promedia el costo. Abajo queda el movimiento de cada cambio.
 
 **Indicadores.** Ventas completadas de un rango de fechas: ingreso después del descuento, costo, margen, ticket promedio, y gráficos por día, método de pago y producto.
 

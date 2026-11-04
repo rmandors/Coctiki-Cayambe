@@ -23,9 +23,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet.tsx'
+import { Badge } from '@/components/ui/badge.tsx'
 import { asNumber, errorMessage, formatDateTime, formatMoney, formatStock, roundMoney } from '@/lib/format.ts'
 import { paymentLabels } from '@/lib/labels.ts'
 import { bundleTotal, priceLines, promoLabel } from '@/lib/pricing.ts'
+import { shortageMessage, stockLabel, stockTone, type PosIngredient, type StockTone } from '@/lib/stock.ts'
 import { supabase } from '@/lib/supabase.ts'
 import type { CartLine, PaymentMethod, Product, ProductVariant, SaleResult, StockWarning } from '@/lib/types.ts'
 
@@ -55,12 +57,14 @@ function FlavorPages({
   page,
   onPage,
   onPick,
+  toneOf,
 }: {
   flavors: ProductVariant[]
   flavorId: string | null
   page: number
   onPage: (page: number) => void
   onPick: (id: string) => void
+  toneOf: (id: string) => ReturnType<typeof stockTone>
 }) {
   const pageCount = flavors.length > 8 ? 2 : 1
   const pageSize = Math.ceil(flavors.length / pageCount)
@@ -70,17 +74,23 @@ function FlavorPages({
   return (
     <div className="grid gap-2">
       <div className="grid grid-cols-2 gap-2">
-        {visible.map((variant) => (
-          <Button
-            key={variant.id}
-            type="button"
-            variant={flavorId === variant.id ? 'default' : 'outline'}
-            className="h-auto min-h-12 whitespace-normal px-2 text-center text-sm leading-tight"
-            onClick={() => onPick(variant.id)}
-          >
-            {variant.name}
-          </Button>
-        ))}
+        {visible.map((variant) => {
+          const tone = toneOf(variant.id)
+          const label = stockLabel(tone)
+          return (
+            <button
+              key={variant.id}
+              type="button"
+              className={`flex min-h-16 items-start justify-between gap-2 rounded-2xl border p-3 text-left text-sm leading-tight ${
+                flavorId === variant.id ? 'border-primary bg-primary/10' : 'border-border bg-card'
+              }`}
+              onClick={() => onPick(variant.id)}
+            >
+              <span className="min-w-0 font-medium">{variant.name}</span>
+              <StockCorner tone={tone} label={label} />
+            </button>
+          )
+        })}
       </div>
       {pageCount > 1 ? (
         <div className="flex items-center justify-center gap-3">
@@ -94,6 +104,18 @@ function FlavorPages({
         </div>
       ) : null}
     </div>
+  )
+}
+
+function StockCorner({ tone, label }: { tone: StockTone | null; label: string | null }) {
+  if (!label) return null
+  return (
+    <Badge
+      variant={tone === 'agotado' ? 'destructive' : 'outline'}
+      className={tone === 'bajo' ? 'shrink-0 border-amber-400/55 bg-amber-400/30 text-amber-100' : 'shrink-0'}
+    >
+      {label}
+    </Badge>
   )
 }
 
@@ -133,7 +155,7 @@ export function PosPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('id, name, category, price, requires_variant, door_only, product_variants(id, name, price, active), product_price_tiers(quantity, total_price)')
+        .select('id, name, category, price, low_stock_at, requires_variant, door_only, product_variants(id, name, price, active), product_price_tiers(quantity, total_price)')
         .eq('active', true)
         .order('category')
         .order('name')
@@ -141,6 +163,7 @@ export function PosPage() {
       return ((data ?? []) as Product[]).map((product) => ({
         ...product,
         price: asNumber(product.price),
+        low_stock_at: asNumber(product.low_stock_at),
         product_price_tiers: (product.product_price_tiers ?? [])
           .map((tier) => ({ quantity: asNumber(tier.quantity), total_price: asNumber(tier.total_price) }))
           .sort((a, b) => a.quantity - b.quantity),
@@ -151,6 +174,22 @@ export function PosPage() {
             price: variant.price === null ? null : asNumber(variant.price),
           }))
           .sort((a, b) => a.name.localeCompare(b.name, 'es')),
+      }))
+    },
+  })
+
+  const stockQuery = useQuery({
+    queryKey: ['pos-stock'],
+    enabled: Boolean(profile),
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pos_ingredients')
+      if (error) throw new Error(error.message)
+      return ((data ?? []) as PosIngredient[]).map((row) => ({
+        ...row,
+        variant_id: row.variant_id ?? null,
+        stock: asNumber(row.stock),
+        min_stock: asNumber(row.min_stock),
+        per_unit: asNumber(row.per_unit),
       }))
     },
   })
@@ -213,20 +252,31 @@ export function PosPage() {
   )
   const total = roundMoney(subtotal - discount)
 
+  function commitCart(next: CartLine[]) {
+    const message = shortageMessage(stockQuery.data ?? [], next)
+    if (message) {
+      toast.error(message)
+      return false
+    }
+    setCart(next)
+    return true
+  }
+
   function addLine(line: Omit<CartLine, 'key' | 'quantity'> & { quantity?: number }) {
     const key = `${line.productId}:${line.variantId ?? ''}`
     const quantity = line.quantity ?? 1
-    setCart((current) => {
-      const existing = current.find((item) => item.key === key)
-      if (!existing) return [...current, { ...line, key, quantity }]
-      return current.map((item) => item.key === key ? { ...item, quantity: item.quantity + quantity } : item)
-    })
+    const existing = cart.find((item) => item.key === key)
+    const next = existing
+      ? cart.map((item) => item.key === key ? { ...item, quantity: item.quantity + quantity } : item)
+      : [...cart, { ...line, key, quantity }]
+    commitCart(next)
   }
 
   function setQuantity(key: string, quantity: number) {
-    setCart((current) => quantity <= 0
-      ? current.filter((line) => line.key !== key)
-      : current.map((line) => line.key === key ? { ...line, quantity } : line))
+    const next = quantity <= 0
+      ? cart.filter((line) => line.key !== key)
+      : cart.map((line) => line.key === key ? { ...line, quantity } : line)
+    commitCart(next)
   }
 
   function openProduct(product: Product) {
@@ -271,14 +321,17 @@ export function PosPage() {
       setDiscountValue('')
       setNote('')
       setCartOpen(false)
-      if (result.warnings.some((warning) => warning.level === 'negativo')) {
-        toast.warning('Venta registrada. Hay insumos en negativo.')
+      if (result.warnings.some((warning) => warning.level === 'agotado')) {
+        toast.warning('Venta registrada. Hay insumos agotados.')
+      } else if (result.warnings.some((warning) => warning.level === 'bajo')) {
+        toast.success(`Venta #${result.sale_number} registrada. Quedó stock bajo.`)
       } else {
         toast.success(`Venta #${result.sale_number} registrada`)
       }
       void queryClient.invalidateQueries({ queryKey: ['sales'] })
       void queryClient.invalidateQueries({ queryKey: ['inventory'] })
       void queryClient.invalidateQueries({ queryKey: ['kpis'] })
+      void queryClient.invalidateQueries({ queryKey: ['pos-stock'] })
     },
     onError: (error) => toast.error(errorMessage(error)),
   })
@@ -368,7 +421,18 @@ export function PosPage() {
         <div className="flex justify-between text-muted-foreground"><dt>Descuento</dt><dd>-{formatMoney(discount)}</dd></div>
         <div className="flex justify-between font-heading text-2xl"><dt>Total</dt><dd>{formatMoney(total)}</dd></div>
       </dl>
-      <Button className="h-14 text-base" disabled={cart.length === 0 || sale.isPending} onClick={() => sale.mutate()}>
+      <Button
+        className="h-14 text-base"
+        disabled={cart.length === 0 || sale.isPending || stockQuery.isLoading}
+        onClick={() => {
+          const message = shortageMessage(stockQuery.data ?? [], cart)
+          if (message) {
+            toast.error(message)
+            return
+          }
+          sale.mutate()
+        }}
+      >
         {sale.isPending ? 'Registrando…' : <><Receipt /> Registrar venta</>}
       </Button>
     </div>
@@ -398,6 +462,7 @@ export function PosPage() {
       </div>
       {productsQuery.isLoading ? <p className="text-sm text-muted-foreground">Cargando menú…</p> : null}
       {productsQuery.isError ? <p className="text-sm text-destructive">{errorMessage(productsQuery.error)}</p> : null}
+      {stockQuery.isError ? <p className="mb-3 text-sm text-destructive">No se pudo cargar el stock. Igual se valida al registrar la venta.</p> : null}
       {!productsQuery.isLoading && visible.length === 0 ? (
         <EmptyState
           title="No hay productos"
@@ -410,21 +475,28 @@ export function PosPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {visible.map((product) => {
             const inCart = cart.filter((line) => line.productId === product.id).reduce((sum, line) => sum + line.quantity, 0)
+            const tone = product.requires_variant ? null : stockTone(stockQuery.data ?? [], product.id, null, product.low_stock_at)
+            const label = stockLabel(tone)
             return (
               <button
                 key={product.id}
                 type="button"
                 onClick={() => openProduct(product)}
-                className="relative flex min-h-28 flex-col items-start justify-between rounded-2xl border border-border bg-card p-4 text-left transition hover:border-primary/60"
+                className="flex min-h-28 flex-col items-start justify-between rounded-2xl border border-border bg-card p-4 text-left transition hover:border-primary/60"
               >
-                {inCart > 0 ? (
-                  <span className="absolute top-3 right-3 grid size-6 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-                    {inCart}
+                <span className="flex w-full items-start justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="block text-xs tracking-wide text-muted-foreground uppercase">{product.category}</span>
+                    <span className="font-heading mt-1 block text-xl">{product.name}</span>
                   </span>
-                ) : null}
-                <span>
-                  <span className="block text-xs tracking-wide text-muted-foreground uppercase">{product.category}</span>
-                  <span className="font-heading mt-1 block text-xl">{product.name}</span>
+                  <span className="flex shrink-0 flex-col items-end gap-1">
+                    <StockCorner tone={tone} label={label} />
+                    {inCart > 0 ? (
+                      <span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+                        {inCart}
+                      </span>
+                    ) : null}
+                  </span>
                 </span>
                 <span className="text-sm font-medium text-primary">{formatMoney(product.price)}</span>
               </button>
@@ -467,6 +539,7 @@ export function PosPage() {
               page={flavorPage}
               onPage={setFlavorPage}
               onPick={setFlavorId}
+              toneOf={(id) => stockTone(stockQuery.data ?? [], pickProduct.id, id, pickProduct.low_stock_at)}
             />
           ) : null}
           <div className="flex items-center justify-center gap-3">
@@ -536,8 +609,8 @@ export function PosPage() {
           {receipt && receipt.warnings.length > 0 ? (
             <ul className="grid gap-1 text-sm">
               {receipt.warnings.map((warning) => (
-                <li key={warning.item_id} className={warning.level === 'negativo' ? 'text-destructive' : 'text-amber-200'}>
-                  {warning.level === 'negativo' ? 'Stock negativo' : 'Stock bajo'}: {warning.item_name} quedó en {formatStock(warning.stock, warning.unit)}
+                <li key={warning.item_id} className={warning.level === 'bajo' ? 'text-amber-200' : 'text-destructive'}>
+                  {warning.level === 'agotado' ? 'Agotado' : warning.level === 'negativo' ? 'Stock negativo' : 'Stock bajo'}: {warning.item_name} quedó en {formatStock(warning.stock, warning.unit)}
                 </li>
               ))}
             </ul>

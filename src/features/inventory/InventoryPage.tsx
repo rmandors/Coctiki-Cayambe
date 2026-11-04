@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ClipboardPen, ShoppingCart } from 'lucide-react'
 import { toast } from 'sonner'
-import { PageHeader } from '@/components/feedback.tsx'
+import { EmptyState, PageHeader } from '@/components/feedback.tsx'
 import { Badge } from '@/components/ui/badge.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import {
@@ -53,8 +53,16 @@ function mapItem(row: InventoryItem): InventoryItem {
   }
 }
 
+const unlinkedCategory = 'Sin receta'
+
+function categoryLabel(names: Set<string> | undefined) {
+  if (!names || names.size === 0) return unlinkedCategory
+  return Array.from(names).sort((a, b) => a.localeCompare(b, 'es')).join(' · ')
+}
+
 export function InventoryPage() {
   const queryClient = useQueryClient()
+  const [category, setCategory] = useState('Todas')
   const [draft, setDraft] = useState<Draft | null>(null)
   const [amount, setAmount] = useState('')
   const [cost, setCost] = useState('')
@@ -66,6 +74,28 @@ export function InventoryPage() {
       const { data, error } = await supabase.from('inventory_items').select('*').order('name')
       if (error) throw new Error(error.message)
       return ((data ?? []) as InventoryItem[]).map(mapItem)
+    },
+  })
+
+  const categoriesQuery = useQuery({
+    queryKey: ['inventory-categories'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('recipe_items')
+        .select('inventory_item_id, products(category)')
+      if (error) throw new Error(error.message)
+      const map = new Map<string, Set<string>>()
+      for (const row of (data ?? []) as Array<{
+        inventory_item_id: string
+        products: { category: string } | { category: string }[] | null
+      }>) {
+        const product = Array.isArray(row.products) ? row.products[0] : row.products
+        if (!product?.category) continue
+        const names = map.get(row.inventory_item_id) ?? new Set<string>()
+        names.add(product.category)
+        map.set(row.inventory_item_id, names)
+      }
+      return map
     },
   })
 
@@ -92,6 +122,7 @@ export function InventoryPage() {
       if (!draft) return
       const value = Number(amount.replace(',', '.'))
       if (!Number.isFinite(value)) throw new Error('Cantidad inválida')
+      if (draft.mode === 'ajuste' && value < 0) throw new Error('El stock no puede quedar negativo')
       const unitCost = cost.trim() === '' ? null : Number(cost.replace(',', '.'))
       if (unitCost !== null && (!Number.isFinite(unitCost) || unitCost < 0)) {
         throw new Error('Costo inválido')
@@ -112,12 +143,45 @@ export function InventoryPage() {
       void queryClient.invalidateQueries({ queryKey: ['inventory'] })
       void queryClient.invalidateQueries({ queryKey: ['movements'] })
       void queryClient.invalidateQueries({ queryKey: ['kpis'] })
+      void queryClient.invalidateQueries({ queryKey: ['pos-stock'] })
     },
     onError: (error) => toast.error(errorMessage(error)),
   })
 
   const items = itemsQuery.data ?? []
-  const low = items.filter((item) => item.active && (item.stock <= item.min_stock || item.stock < 0))
+  const categoryByItem = categoriesQuery.data
+  const categories = useMemo(() => {
+    const names = new Set<string>()
+    let unlinked = false
+    if (categoryByItem) {
+      for (const item of items) {
+        const linked = categoryByItem.get(item.id)
+        if (!linked || linked.size === 0) unlinked = true
+        else linked.forEach((name) => names.add(name))
+      }
+    }
+    const list = ['Todas', ...Array.from(names).sort((a, b) => a.localeCompare(b, 'es'))]
+    if (unlinked) list.push(unlinkedCategory)
+    return list
+  }, [items, categoryByItem])
+  const visible = items.filter((item) => {
+    if (category === 'Todas') return true
+    const linked = categoryByItem?.get(item.id)
+    if (category === unlinkedCategory) return !linked || linked.size === 0
+    return linked?.has(category) ?? false
+  })
+  const visibleNames = new Set(visible.map((item) => item.name))
+  const movements = (movementsQuery.data ?? []).filter((movement) => {
+    if (category === 'Todas') return true
+    const name = movement.inventory_items?.name
+    return name ? visibleNames.has(name) : false
+  })
+  const out = items.filter((item) => item.active && item.stock <= 0)
+  const low = items.filter((item) => item.active && item.stock > 0 && item.stock <= item.min_stock)
+
+  useEffect(() => {
+    if (category !== 'Todas' && !categories.includes(category)) setCategory('Todas')
+  }, [category, categories])
 
   function open(item: InventoryItem, mode: Draft['mode']) {
     setDraft({ item, mode })
@@ -132,19 +196,39 @@ export function InventoryPage() {
         title="Inventario"
         description="El stock baja solo al registrar una venta. Aquí puedes contar o registrar una compra."
       />
-      {low.length > 0 ? (
+      {out.length > 0 || low.length > 0 ? (
         <div className="mb-4 rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm">
-          {low.length} insumo{low.length === 1 ? '' : 's'} en o bajo el mínimo.
+          {out.length > 0 ? <p>{out.length} agotado{out.length === 1 ? '' : 's'}.</p> : null}
+          {low.length > 0 ? <p>{low.length} en stock bajo.</p> : null}
         </div>
       ) : null}
+      <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+        {categories.map((name) => (
+          <Button
+            key={name}
+            variant={category === name ? 'default' : 'outline'}
+            className="h-10 shrink-0"
+            onClick={() => setCategory(name)}
+          >
+            {name}
+          </Button>
+        ))}
+      </div>
       {itemsQuery.isError ? <p className="mb-3 text-sm text-destructive">{errorMessage(itemsQuery.error)}</p> : null}
+      {categoriesQuery.isError ? <p className="mb-3 text-sm text-destructive">{errorMessage(categoriesQuery.error)}</p> : null}
+      {!itemsQuery.isLoading && visible.length === 0 ? (
+        <EmptyState title="Sin insumos" detail="No hay insumos para ese filtro." />
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {items.map((item) => {
+        {visible.map((item) => {
           const level = tone(item)
           return (
             <article key={item.id} className="rounded-2xl border border-border bg-card p-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
+                  {categoryByItem ? (
+                    <span className="block text-xs tracking-wide text-muted-foreground uppercase">{categoryLabel(categoryByItem.get(item.id))}</span>
+                  ) : null}
                   <h2 className="font-heading text-xl">{item.name}</h2>
                   <p className="text-xs text-muted-foreground">
                     {unitOptions.find((option) => option.value === item.unit)?.label} · costo {formatMoney(item.unit_cost)}
@@ -152,10 +236,10 @@ export function InventoryPage() {
                 </div>
                 {!item.active ? <Badge variant="outline">Inactivo</Badge> : null}
                 {level === 'out' ? <Badge variant="destructive">Agotado</Badge> : null}
-                {level === 'low' ? <Badge variant="secondary">Bajo</Badge> : null}
+                {level === 'low' ? <Badge variant="outline" className="border-amber-400/55 bg-amber-400/30 text-amber-100">Stock bajo</Badge> : null}
               </div>
               <p className="mt-4 font-heading text-3xl">{formatQty(item.stock)}</p>
-              <p className="text-xs text-muted-foreground">Mínimo {formatStock(item.min_stock, item.unit as InventoryUnit)}</p>
+              <p className="text-xs text-muted-foreground">Stock bajo desde {formatStock(item.min_stock, item.unit as InventoryUnit)}</p>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
                 <div
                   className={level === 'out' ? 'h-full bg-destructive' : level === 'low' ? 'h-full bg-amber-400' : 'h-full bg-emerald-500'}
@@ -188,7 +272,7 @@ export function InventoryPage() {
             </tr>
           </thead>
           <tbody>
-            {(movementsQuery.data ?? []).map((movement) => (
+            {movements.map((movement) => (
               <tr key={movement.id} className="border-t border-border">
                 <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(movement.created_at)}</td>
                 <td className="px-3 py-2">{movement.inventory_items?.name ?? '—'}</td>

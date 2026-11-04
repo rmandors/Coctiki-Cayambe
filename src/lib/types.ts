@@ -3,7 +3,7 @@ export type PaymentMethod = 'efectivo' | 'transferencia' | 'tarjeta'
 export type SaleStatus = 'completada' | 'anulada'
 export type MovementReason = 'venta' | 'anulacion' | 'ajuste' | 'compra'
 export type InventoryUnit = 'galon' | 'litro' | 'ml' | 'kg' | 'g' | 'unidad'
-export type StockLevel = 'negativo' | 'bajo'
+export type StockLevel = 'negativo' | 'bajo' | 'agotado'
 
 export type Profile = {
   id: string
@@ -43,6 +43,7 @@ export type Product = {
   name: string
   category: string
   price: number
+  low_stock_at: number
   active: boolean
   requires_variant: boolean
   door_only: boolean

@@ -41,6 +41,14 @@ function numberOrNull(value: string) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function suggestedLowStock(unit: InventoryUnit) {
+  if (unit === 'galon' || unit === 'kg') return '0.5'
+  if (unit === 'litro') return '1'
+  if (unit === 'ml') return '200'
+  if (unit === 'g') return '100'
+  return '3'
+}
+
 function toDraft(recipe: RecipeItem): DraftLine {
   const yieldCount = 1 / recipe.quantity
   const wholeYield = Math.abs(yieldCount - Math.round(yieldCount)) < 0.001 && yieldCount >= 2
@@ -72,13 +80,14 @@ export function CatalogPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('id, name, category, price, active, requires_variant, door_only, created_at, product_variants(id, product_id, name, price, active)')
+        .select('id, name, category, price, low_stock_at, active, requires_variant, door_only, created_at, product_variants(id, product_id, name, price, active)')
         .order('category')
         .order('name')
       if (error) throw new Error(error.message)
       return ((data ?? []) as Product[]).map((product) => ({
         ...product,
         price: asNumber(product.price),
+        low_stock_at: asNumber(product.low_stock_at),
         product_variants: (product.product_variants ?? []).map((variant) => ({
           ...variant,
           price: variant.price === null ? null : asNumber(variant.price),
@@ -100,6 +109,7 @@ export function CatalogPage() {
     void queryClient.invalidateQueries({ queryKey: ['products'] })
     void queryClient.invalidateQueries({ queryKey: ['recipes'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog-margins'] })
+    void queryClient.invalidateQueries({ queryKey: ['pos-stock'] })
   }
 
   return (
@@ -241,7 +251,7 @@ function ItemDialog({
 }) {
   const [name, setName] = useState(item?.name ?? '')
   const [unit, setUnit] = useState<InventoryUnit>(item?.unit ?? 'unidad')
-  const [minStock, setMinStock] = useState(String(item?.min_stock ?? 0))
+  const [minStock, setMinStock] = useState(item ? String(item.min_stock) : suggestedLowStock('unidad'))
   const [unitCost, setUnitCost] = useState(String(item?.unit_cost ?? 0))
   const [initial, setInitial] = useState('0')
   const [active, setActive] = useState(item?.active ?? true)
@@ -259,7 +269,17 @@ function ItemDialog({
           </div>
           <div className="grid gap-1.5">
             <Label>Unidad</Label>
-            <Select value={unit} disabled={Boolean(item)} onValueChange={(value) => setUnit(value as InventoryUnit)}>
+            <Select
+              value={unit}
+              disabled={Boolean(item)}
+              onValueChange={(value) => {
+                const next = value as InventoryUnit
+                if (!item) {
+                  setMinStock((current) => current === suggestedLowStock(unit) ? suggestedLowStock(next) : current)
+                }
+                setUnit(next)
+              }}
+            >
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {unitOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
@@ -268,8 +288,9 @@ function ItemDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="item-min">Mínimo</Label>
+              <Label htmlFor="item-min">Stock bajo desde</Label>
               <Input id="item-min" inputMode="decimal" value={minStock} onChange={(event) => setMinStock(event.target.value)} />
+              <p className="text-xs text-muted-foreground">Avisa en inventario al llegar a esta cantidad o menos.</p>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="item-cost">Costo por unidad</Label>
@@ -335,11 +356,12 @@ function ProductsPanel({
   const selected = products.find((product) => product.id === selectedId) ?? null
 
   const create = useMutation({
-    mutationFn: async (input: { name: string; category: string; price: number; requiresVariant: boolean }) => {
+    mutationFn: async (input: { name: string; category: string; price: number; lowStockAt: number; requiresVariant: boolean }) => {
       const { data, error } = await supabase.from('products').insert({
         name: input.name,
         category: input.category,
         price: input.price,
+        low_stock_at: input.lowStockAt,
         requires_variant: input.requiresVariant,
       }).select('id').single()
       if (error) throw new Error(error.message)
@@ -489,11 +511,12 @@ function ProductCreateDialog({
   pending: boolean
   categories: string[]
   onClose: () => void
-  onSave: (input: { name: string; category: string; price: number; requiresVariant: boolean }) => void
+  onSave: (input: { name: string; category: string; price: number; lowStockAt: number; requiresVariant: boolean }) => void
 }) {
   const [name, setName] = useState('')
   const [category, setCategory] = useState('')
   const [price, setPrice] = useState('')
+  const [lowStockAt, setLowStockAt] = useState('3')
   const [requiresVariant, setRequiresVariant] = useState(false)
 
   return (
@@ -516,6 +539,15 @@ function ProductCreateDialog({
             <Label htmlFor="new-price">Precio</Label>
             <Input id="new-price" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} />
           </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="new-low">Stock bajo desde</Label>
+            <Input id="new-low" inputMode="decimal" value={lowStockAt} onChange={(event) => setLowStockAt(event.target.value)} />
+            <p className="text-xs text-muted-foreground">
+              {requiresVariant
+                ? 'Cada sabor marca stock bajo al quedar en esta cantidad o menos.'
+                : 'Marca stock bajo al quedar en esta cantidad o menos.'}
+            </p>
+          </div>
           <label className="flex items-center justify-between text-sm">
             Pide sabor al vender
             <Switch checked={requiresVariant} onCheckedChange={setRequiresVariant} />
@@ -526,11 +558,12 @@ function ProductCreateDialog({
             disabled={pending}
             onClick={() => {
               const parsed = numberOrNull(price)
-              if (!name.trim() || !category.trim() || parsed === null || parsed < 0) {
-                toast.error('Completa nombre, categoría y precio')
+              const low = numberOrNull(lowStockAt)
+              if (!name.trim() || !category.trim() || parsed === null || parsed < 0 || low === null || low < 0) {
+                toast.error('Completa nombre, categoría, precio y stock bajo')
                 return
               }
-              onSave({ name: name.trim(), category: category.trim(), price: parsed, requiresVariant })
+              onSave({ name: name.trim(), category: category.trim(), price: parsed, lowStockAt: low, requiresVariant })
             }}
           >
             Crear
@@ -557,6 +590,7 @@ function ProductEditor({
   const [name, setName] = useState(product.name)
   const [category, setCategory] = useState(product.category)
   const [price, setPrice] = useState(String(product.price))
+  const [lowStockAt, setLowStockAt] = useState(String(product.low_stock_at))
   const [requiresVariant, setRequiresVariant] = useState(product.requires_variant)
   const [doorOnly, setDoorOnly] = useState(product.door_only)
   const [active, setActive] = useState(product.active)
@@ -584,13 +618,15 @@ function ProductEditor({
   const saveProduct = useMutation({
     mutationFn: async () => {
       const parsed = numberOrNull(price)
-      if (!name.trim() || !category.trim() || parsed === null || parsed < 0) {
-        throw new Error('Completa nombre, categoría y precio')
+      const low = numberOrNull(lowStockAt)
+      if (!name.trim() || !category.trim() || parsed === null || parsed < 0 || low === null || low < 0) {
+        throw new Error('Completa nombre, categoría, precio y stock bajo')
       }
       const { error } = await supabase.from('products').update({
         name: name.trim(),
         category: category.trim(),
         price: parsed,
+        low_stock_at: low,
         requires_variant: requiresVariant,
         door_only: doorOnly,
         active,
@@ -689,7 +725,7 @@ function ProductEditor({
 
   return (
     <div className="flex flex-col gap-4 self-start rounded-3xl border border-border bg-card p-4">
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <div className="grid gap-1.5">
           <Label htmlFor="product-name">Nombre</Label>
           <Input id="product-name" value={name} onChange={(event) => setName(event.target.value)} />
@@ -701,6 +737,13 @@ function ProductEditor({
         <div className="grid gap-1.5">
           <Label htmlFor="product-price">Precio</Label>
           <Input id="product-price" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="product-low">Stock bajo desde</Label>
+          <Input id="product-low" inputMode="decimal" value={lowStockAt} onChange={(event) => setLowStockAt(event.target.value)} />
+          <p className="text-xs text-muted-foreground">
+            {requiresVariant ? 'Cada sabor avisa al quedar en esta cantidad o menos.' : 'Avisa al quedar en esta cantidad o menos.'}
+          </p>
         </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
